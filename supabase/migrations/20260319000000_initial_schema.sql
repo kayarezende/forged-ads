@@ -280,14 +280,14 @@ CREATE INDEX idx_templates_active_category ON public.templates(category, sort_or
 CREATE INDEX idx_profiles_stripe_customer ON public.profiles(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
 
 -- ============================================================
--- SEED: Default admin user (password: admin — change in production!)
--- password_hash is bcrypt of "admin"
+-- SEED: Default admin user (password: admin123 — change in production!)
+-- password_hash is bcrypt of "admin123"
 -- ============================================================
 INSERT INTO public.users (id, email, password_hash, display_name)
 VALUES (
   '00000000-0000-0000-0000-000000000001',
   'admin@forgedads.local',
-  '$2b$10$rQZ8kHqL1Cj1YvDGpVOaheZZ5x5vXJfqVm0dBl3VKnRj8NxT0XKWK',
+  '$2b$10$uhcAxQu6LhfcGtYA8I5mzOXMk06g2RK9iB5XkHbVWDB5rCEIfOHAC',
   'Admin'
 );
 
