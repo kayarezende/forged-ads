@@ -2,17 +2,14 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  images: {
-    remotePatterns: [
+  // Serve local uploads directory as static files
+  async rewrites() {
+    return [
       {
-        protocol: "https",
-        hostname: "**.supabase.co",
+        source: "/uploads/:path*",
+        destination: "/api/uploads/:path*",
       },
-      {
-        protocol: "https",
-        hostname: "**.supabase.in",
-      },
-    ],
+    ];
   },
 };
 

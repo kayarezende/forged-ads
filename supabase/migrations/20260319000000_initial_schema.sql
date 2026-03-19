@@ -1,9 +1,6 @@
 -- ============================================================
--- ForgedAds Initial Schema
+-- ForgedAds — Self-Hosted Schema (vanilla Postgres)
 -- ============================================================
-
--- EXTENSIONS
-CREATE EXTENSION IF NOT EXISTS moddatetime SCHEMA extensions;
 
 -- ENUMS
 CREATE TYPE subscription_tier AS ENUM ('starter', 'pro', 'business');
@@ -12,11 +9,37 @@ CREATE TYPE content_type AS ENUM ('image', 'video');
 CREATE TYPE generation_status AS ENUM ('pending', 'generating', 'completed', 'failed');
 CREATE TYPE credit_tx_type AS ENUM ('subscription_grant', 'topup_purchase', 'generation_spend', 'refund', 'admin_adjustment');
 
+-- Generic updated_at trigger (replaces Supabase moddatetime)
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ============================================================
+-- USERS (replaces Supabase auth.users)
+-- ============================================================
+CREATE TABLE public.users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  display_name TEXT,
+  avatar_url TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TRIGGER users_updated_at
+  BEFORE UPDATE ON public.users
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
 -- ============================================================
 -- PROFILES
 -- ============================================================
 CREATE TABLE public.profiles (
-  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  id UUID PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
   display_name TEXT,
   avatar_url TEXT,
@@ -34,7 +57,35 @@ CREATE TABLE public.profiles (
 
 CREATE TRIGGER profiles_updated_at
   BEFORE UPDATE ON public.profiles
-  FOR EACH ROW EXECUTE FUNCTION extensions.moddatetime(updated_at);
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- Auto-create profile when user is inserted
+CREATE OR REPLACE FUNCTION handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, email, display_name)
+    VALUES (NEW.id, NEW.email, COALESCE(NEW.display_name, NEW.email));
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER on_user_created
+  AFTER INSERT ON public.users
+  FOR EACH ROW EXECUTE FUNCTION handle_new_user();
+
+-- ============================================================
+-- SESSIONS (simple token-based auth)
+-- ============================================================
+CREATE TABLE public.sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_sessions_token ON public.sessions(token);
+CREATE INDEX idx_sessions_expires ON public.sessions(expires_at);
 
 -- ============================================================
 -- BRAND KITS
@@ -58,7 +109,7 @@ CREATE TABLE public.brand_kits (
 
 CREATE TRIGGER brand_kits_updated_at
   BEFORE UPDATE ON public.brand_kits
-  FOR EACH ROW EXECUTE FUNCTION extensions.moddatetime(updated_at);
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 CREATE UNIQUE INDEX idx_brand_kits_one_default
   ON public.brand_kits(user_id) WHERE is_default = true;
@@ -83,7 +134,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql;
 
 CREATE TRIGGER enforce_brand_kit_limit
   BEFORE INSERT ON public.brand_kits
@@ -146,10 +197,9 @@ CREATE TABLE public.credit_transactions (
 );
 
 -- ============================================================
--- FUNCTIONS
+-- FUNCTIONS (credit operations)
 -- ============================================================
 
--- Atomic credit deduction
 CREATE OR REPLACE FUNCTION deduct_credits(
   p_user_id UUID, p_amount INTEGER, p_generation_id UUID, p_description TEXT DEFAULT NULL
 ) RETURNS UUID AS $$
@@ -171,9 +221,8 @@ BEGIN
     VALUES (p_user_id, -p_amount, 'generation_spend', p_description, p_generation_id, v_new_balance);
   RETURN p_generation_id;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql;
 
--- Credit refund
 CREATE OR REPLACE FUNCTION refund_credits(
   p_user_id UUID, p_amount INTEGER, p_generation_id UUID
 ) RETURNS VOID AS $$
@@ -186,9 +235,8 @@ BEGIN
   INSERT INTO public.credit_transactions (user_id, amount, type, description, generation_id, balance_after)
     VALUES (p_user_id, p_amount, 'refund', 'Generation failed — auto refund', p_generation_id, v_new_balance);
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql;
 
--- Grant credits (idempotent via stripe_event_id)
 CREATE OR REPLACE FUNCTION grant_credits(
   p_user_id UUID, p_amount INTEGER, p_type credit_tx_type, p_stripe_event_id TEXT, p_description TEXT DEFAULT NULL
 ) RETURNS INTEGER AS $$
@@ -206,9 +254,8 @@ BEGIN
     VALUES (p_user_id, p_amount, p_type, p_description, p_stripe_event_id, v_new_balance);
   RETURN v_new_balance;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql;
 
--- Rate limiting
 CREATE OR REPLACE FUNCTION check_rate_limit(
   p_user_id UUID, p_window_seconds INTEGER DEFAULT 60, p_max_requests INTEGER DEFAULT 10
 ) RETURNS BOOLEAN AS $$
@@ -218,49 +265,7 @@ BEGIN
     WHERE user_id = p_user_id AND created_at > now() - (p_window_seconds || ' seconds')::INTERVAL;
   RETURN v_count < p_max_requests;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Auto-create profile on signup
-CREATE OR REPLACE FUNCTION handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO public.profiles (id, email, display_name)
-    VALUES (NEW.id, NEW.email, COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.email));
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION handle_new_user();
-
--- ============================================================
--- ROW LEVEL SECURITY
--- ============================================================
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.brand_kits ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.generations ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.credit_transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.templates ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Users read own profile" ON public.profiles FOR SELECT USING (auth.uid() = id);
-CREATE POLICY "Users update own profile" ON public.profiles FOR UPDATE USING (auth.uid() = id)
-  WITH CHECK (
-    subscription_tier IS NOT DISTINCT FROM (SELECT subscription_tier FROM public.profiles WHERE id = auth.uid())
-    AND credits_balance IS NOT DISTINCT FROM (SELECT credits_balance FROM public.profiles WHERE id = auth.uid())
-  );
-
-CREATE POLICY "Users read own brand kits" ON public.brand_kits FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "Users insert own brand kits" ON public.brand_kits FOR INSERT WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "Users update own brand kits" ON public.brand_kits FOR UPDATE USING (auth.uid() = user_id);
-CREATE POLICY "Users delete own brand kits" ON public.brand_kits FOR DELETE USING (auth.uid() = user_id);
-
-CREATE POLICY "Users read own generations" ON public.generations FOR SELECT USING (auth.uid() = user_id);
-CREATE POLICY "Users insert own generations" ON public.generations FOR INSERT WITH CHECK (auth.uid() = user_id);
-
-CREATE POLICY "Users read own transactions" ON public.credit_transactions FOR SELECT USING (auth.uid() = user_id);
-
-CREATE POLICY "Anyone reads active templates" ON public.templates FOR SELECT USING (is_active = true);
+$$ LANGUAGE plpgsql;
 
 -- ============================================================
 -- INDEXES
@@ -273,3 +278,18 @@ CREATE INDEX idx_generations_rate_limit ON public.generations(user_id, created_a
 CREATE INDEX idx_brand_kits_user_id ON public.brand_kits(user_id);
 CREATE INDEX idx_templates_active_category ON public.templates(category, sort_order) WHERE is_active = true;
 CREATE INDEX idx_profiles_stripe_customer ON public.profiles(stripe_customer_id) WHERE stripe_customer_id IS NOT NULL;
+
+-- ============================================================
+-- SEED: Default admin user (password: admin — change in production!)
+-- password_hash is bcrypt of "admin"
+-- ============================================================
+INSERT INTO public.users (id, email, password_hash, display_name)
+VALUES (
+  '00000000-0000-0000-0000-000000000001',
+  'admin@forgedads.local',
+  '$2b$10$rQZ8kHqL1Cj1YvDGpVOaheZZ5x5vXJfqVm0dBl3VKnRj8NxT0XKWK',
+  'Admin'
+);
+
+-- Give the default user some starter credits
+UPDATE public.profiles SET credits_balance = 100 WHERE id = '00000000-0000-0000-0000-000000000001';
