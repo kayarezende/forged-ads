@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentProfile } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { PLANS } from "@/lib/constants";
 import type { Profile, SubscriptionTier } from "@/types";
@@ -22,20 +22,10 @@ export const metadata: Metadata = {
 };
 
 export default async function BillingPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single();
+  const profile = await getCurrentProfile();
   if (!profile) redirect("/login");
 
-  const p = profile as unknown as Profile;
+  const p = profile as Profile;
   const plan = PLANS[p.subscription_tier as SubscriptionTier];
 
   const statusVariant =

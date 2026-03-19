@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
+import { getUserId } from "@/lib/auth";
+import { queryOne, query } from "@/lib/db";
 import { PLANS } from "@/lib/constants";
 import type { BrandKit, SubscriptionTier } from "@/types";
 import { Card, CardContent } from "@/components/ui/card";
@@ -16,29 +16,24 @@ export const metadata: Metadata = {
 };
 
 export default async function BrandKitsPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const userId = await getUserId();
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("subscription_tier")
-    .eq("id", user.id)
-    .single();
+  const profile = await queryOne<{ subscription_tier: string }>(
+    `SELECT subscription_tier FROM profiles WHERE id = $1`,
+    [userId]
+  );
 
   const tier = (profile?.subscription_tier ?? "starter") as SubscriptionTier;
   const plan = PLANS[tier];
 
-  const { data: brandKits } = await supabase
-    .from("brand_kits")
-    .select("*")
-    .eq("user_id", user.id)
-    .order("is_default", { ascending: false })
-    .order("created_at", { ascending: false });
+  const result = await query<BrandKit>(
+    `SELECT * FROM brand_kits
+     WHERE user_id = $1
+     ORDER BY is_default DESC, created_at DESC`,
+    [userId]
+  );
 
-  const kits = (brandKits ?? []) as BrandKit[];
+  const kits = result.rows;
   const atLimit = kits.length >= plan.maxBrandKits;
 
   return (

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { createClient } from "@/lib/supabase/server";
+import { getUserId } from "@/lib/auth";
+import { queryOne } from "@/lib/db";
 import { redirect } from "next/navigation";
 import { PLANS } from "@/lib/constants";
 import type { SubscriptionTier } from "@/types";
@@ -11,27 +12,22 @@ export const metadata: Metadata = {
 };
 
 export default async function NewBrandKitPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  const userId = await getUserId();
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("subscription_tier")
-    .eq("id", user.id)
-    .single();
+  const profile = await queryOne<{ subscription_tier: string }>(
+    `SELECT subscription_tier FROM profiles WHERE id = $1`,
+    [userId]
+  );
 
   const tier = (profile?.subscription_tier ?? "starter") as SubscriptionTier;
   const plan = PLANS[tier];
 
-  const { count } = await supabase
-    .from("brand_kits")
-    .select("*", { count: "exact", head: true })
-    .eq("user_id", user.id);
+  const countResult = await queryOne<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM brand_kits WHERE user_id = $1`,
+    [userId]
+  );
 
-  if ((count ?? 0) >= plan.maxBrandKits) {
+  if (Number(countResult?.count ?? 0) >= plan.maxBrandKits) {
     redirect("/dashboard/brand-kits");
   }
 

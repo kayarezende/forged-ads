@@ -1,4 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
+import { getUserId } from "@/lib/auth";
+import { query } from "@/lib/db";
 import { GalleryContent } from "./gallery-content";
 import type { Generation } from "@/types";
 
@@ -10,13 +11,15 @@ export const metadata = {
 };
 
 export default async function GalleryPage() {
-  const supabase = await createClient();
+  const userId = await getUserId();
 
-  const { data } = await supabase
-    .from("generations")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(PAGE_SIZE);
+  const result = await query<Generation>(
+    `SELECT * FROM generations
+     WHERE user_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [userId, PAGE_SIZE]
+  );
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -25,7 +28,7 @@ export default async function GalleryPage() {
         Your generation history
       </p>
       <GalleryContent
-        initialGenerations={(data ?? []) as Generation[]}
+        initialGenerations={result.rows}
         pageSize={PAGE_SIZE}
       />
     </div>

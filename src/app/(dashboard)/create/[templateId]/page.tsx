@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { queryOne } from "@/lib/db";
 import { GuidedFlow } from "@/components/GuidedFlow";
 import type { Template } from "@/types";
 
@@ -9,14 +9,12 @@ export async function generateMetadata({
   params: Promise<{ templateId: string }>;
 }) {
   const { templateId } = await params;
-  const supabase = await createClient();
 
-  const { data } = await supabase
-    .from("templates")
-    .select("name")
-    .eq("id", templateId)
-    .eq("is_active", true)
-    .single();
+  const data = await queryOne<{ name: string }>(
+    `SELECT name FROM templates
+     WHERE id = $1 AND is_active = true`,
+    [templateId]
+  );
 
   return {
     title: data ? data.name : "Template",
@@ -32,18 +30,16 @@ export default async function GuidedCreatePage({
   params: Promise<{ templateId: string }>;
 }) {
   const { templateId } = await params;
-  const supabase = await createClient();
 
-  const { data } = await supabase
-    .from("templates")
-    .select("*")
-    .eq("id", templateId)
-    .eq("is_active", true)
-    .single();
+  const data = await queryOne<Template>(
+    `SELECT * FROM templates
+     WHERE id = $1 AND is_active = true`,
+    [templateId]
+  );
 
   if (!data) {
     notFound();
   }
 
-  return <GuidedFlow template={data as Template} />;
+  return <GuidedFlow template={data} />;
 }

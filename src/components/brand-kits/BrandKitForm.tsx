@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { toast } from "sonner";
-import { createBrowserClient } from "@supabase/ssr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -97,25 +96,22 @@ export function BrandKitForm({ brandKit }: BrandKitFormProps) {
   }
 
   async function uploadLogo(file: File): Promise<string> {
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) throw new Error("Not authenticated");
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("directory", "brand-logos");
 
-    const ext = file.name.split(".").pop() ?? "png";
-    const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      body: formData,
+    });
 
-    const { error } = await supabase.storage
-      .from("brand-logos")
-      .upload(path, file, { upsert: true });
-    if (error) throw new Error(`Upload failed: ${error.message}`);
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error ?? "Upload failed");
+    }
 
-    const { data } = supabase.storage.from("brand-logos").getPublicUrl(path);
-    return data.publicUrl;
+    const data: { url: string } = await res.json();
+    return data.url;
   }
 
   async function handleSubmit(e: React.FormEvent) {

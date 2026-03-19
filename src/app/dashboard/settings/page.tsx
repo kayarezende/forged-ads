@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/auth";
+import { queryOne } from "@/lib/db";
 import { Separator } from "@/components/ui/separator";
 import type { Profile } from "@/types";
 import { ProfileForm } from "@/components/settings/profile-form";
@@ -8,19 +8,12 @@ import { PasswordForm } from "@/components/settings/password-form";
 import { DeleteAccount } from "@/components/settings/delete-account";
 
 export default async function SettingsPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/");
+  const user = await getCurrentUser();
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("display_name, avatar_url, email")
-    .eq("id", user.id)
-    .single();
-
-  const p = profile as Pick<Profile, "display_name" | "avatar_url" | "email"> | null;
+  const p = await queryOne<Pick<Profile, "display_name" | "avatar_url" | "email">>(
+    `SELECT display_name, avatar_url, email FROM profiles WHERE id = $1`,
+    [user.id]
+  );
 
   return (
     <div className="mx-auto w-full max-w-2xl space-y-8 px-4 py-8">

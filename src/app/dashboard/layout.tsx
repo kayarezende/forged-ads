@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/auth";
+import { queryOne } from "@/lib/db";
 import { SidebarNav } from "@/components/SidebarNav";
 import { DashboardHeader } from "@/components/DashboardHeader";
 import type { Profile } from "@/types";
@@ -9,25 +9,18 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
 
-  if (!user) {
-    redirect("/");
-  }
+  const profile = await queryOne<Pick<Profile, "credits_balance" | "display_name" | "avatar_url" | "email">>(
+    `SELECT credits_balance, display_name, avatar_url, email
+     FROM public.profiles WHERE id = $1`,
+    [user.id]
+  );
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("credits_balance, display_name, avatar_url, email")
-    .eq("id", user.id)
-    .single();
-
-  const credits = (profile as Pick<Profile, "credits_balance"> | null)?.credits_balance ?? 0;
-  const displayName = (profile as Pick<Profile, "display_name"> | null)?.display_name ?? null;
-  const avatarUrl = (profile as Pick<Profile, "avatar_url"> | null)?.avatar_url ?? null;
-  const email = (profile as Pick<Profile, "email"> | null)?.email ?? user.email ?? "";
+  const credits = profile?.credits_balance ?? 0;
+  const displayName = profile?.display_name ?? null;
+  const avatarUrl = profile?.avatar_url ?? null;
+  const email = profile?.email ?? user.email ?? "";
 
   return (
     <div className="flex h-full">

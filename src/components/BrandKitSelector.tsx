@@ -56,18 +56,10 @@ export function BrandKitSelector({
   const load = useCallback(async () => {
     if (loaded) return;
     try {
-      const { createBrowserClient } = await import("@supabase/ssr");
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      );
-      const { data } = await supabase
-        .from("brand_kits")
-        .select(
-          "id, name, primary_color, secondary_color, accent_color, is_default"
-        )
-        .order("is_default", { ascending: false });
-      setKits(data ?? []);
+      const res = await fetch("/api/brand-kits");
+      if (!res.ok) return;
+      const data: BrandKitSummary[] = await res.json();
+      setKits(data);
       setLoaded(true);
     } catch {
       // Non-critical — brand kits are optional

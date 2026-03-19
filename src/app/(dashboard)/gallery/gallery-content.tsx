@@ -4,7 +4,6 @@ import { useState, useCallback } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { createClient } from "@/lib/supabase/client";
 import type { Generation, ContentType } from "@/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -54,19 +53,18 @@ export function GalleryContent({ initialGenerations, pageSize }: Props) {
 
   const fetchGenerations = useCallback(
     async (contentType: Filter, offset: number) => {
-      const supabase = createClient();
-      let query = supabase
-        .from("generations")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .range(offset, offset + pageSize - 1);
-
+      const params = new URLSearchParams({
+        offset: String(offset),
+        limit: String(pageSize),
+      });
       if (contentType !== "all") {
-        query = query.eq("content_type", contentType);
+        params.set("content_type", contentType);
       }
 
-      const { data } = await query;
-      return (data ?? []) as Generation[];
+      const res = await fetch(`/api/generations?${params}`);
+      if (!res.ok) return [];
+      const data: Generation[] = await res.json();
+      return data;
     },
     [pageSize]
   );

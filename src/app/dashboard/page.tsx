@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { getUserId } from "@/lib/auth";
+import { query } from "@/lib/db";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,25 +13,19 @@ export const metadata: Metadata = {
   description: "Your ForgedAds dashboard — recent generations and quick actions.",
 };
 
+type GenSummary = Pick<Generation, "id" | "content_type" | "status" | "output_url" | "thumbnail_url" | "prompt" | "created_at">;
+
 export default async function DashboardPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const userId = await getUserId();
 
-  if (!user) redirect("/");
-
-  const { data: generations } = await supabase
-    .from("generations")
-    .select("id, content_type, status, output_url, thumbnail_url, prompt, created_at")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
-    .limit(12);
-
-  const items = (generations ?? []) as Pick<
-    Generation,
-    "id" | "content_type" | "status" | "output_url" | "thumbnail_url" | "prompt" | "created_at"
-  >[];
+  const { rows: items } = await query<GenSummary>(
+    `SELECT id, content_type, status, output_url, thumbnail_url, prompt, created_at
+     FROM public.generations
+     WHERE user_id = $1
+     ORDER BY created_at DESC
+     LIMIT 12`,
+    [userId]
+  );
 
   return (
     <div className="space-y-6">
