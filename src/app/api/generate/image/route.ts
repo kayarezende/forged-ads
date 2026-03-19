@@ -93,8 +93,14 @@ export async function POST(request: Request) {
 
     if (!withinLimit) {
       return NextResponse.json(
-        { error: "Rate limit exceeded. Please wait a moment." },
-        { status: 429 }
+        {
+          error: "Rate limit exceeded. Please wait before generating again.",
+          retryAfter: RATE_LIMITS.windowSeconds,
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": String(RATE_LIMITS.windowSeconds) },
+        }
       );
     }
 

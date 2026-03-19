@@ -2,6 +2,8 @@
 
 import { useState, useCallback } from "react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import type { Generation, ContentType } from "@/types";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,7 +16,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { ImageIcon, Film, Clock, Coins, Loader2 } from "lucide-react";
+import { ImageIcon, Film, Clock, Coins, Loader2, RefreshCw, AlertCircle } from "lucide-react";
 
 type Filter = "all" | ContentType;
 
@@ -38,6 +40,7 @@ interface Props {
 }
 
 export function GalleryContent({ initialGenerations, pageSize }: Props) {
+  const router = useRouter();
   const [generations, setGenerations] =
     useState<Generation[]>(initialGenerations);
   const [filter, setFilter] = useState<Filter>("all");
@@ -47,6 +50,7 @@ export function GalleryContent({ initialGenerations, pageSize }: Props) {
     initialGenerations.length >= pageSize
   );
   const [selected, setSelected] = useState<Generation | null>(null);
+  const [retrying, setRetrying] = useState(false);
 
   const fetchGenerations = useCallback(
     async (contentType: Filter, offset: number) => {
@@ -83,6 +87,38 @@ export function GalleryContent({ initialGenerations, pageSize }: Props) {
     setGenerations((prev) => [...prev, ...data]);
     setHasMore(data.length >= pageSize);
     setLoadingMore(false);
+  };
+
+  const handleRetry = async (generation: Generation) => {
+    setRetrying(true);
+    try {
+      const metadata = generation.metadata as Record<string, unknown> | null;
+      const res = await fetch("/api/generate/image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: (metadata?.original_prompt as string) ?? generation.prompt,
+          templateId: (metadata?.template_id as string) ?? generation.template_id ?? undefined,
+          variables: (metadata?.template_variables as Record<string, string>) ?? undefined,
+          aspectRatio: generation.aspect_ratio,
+          brandKitId: generation.brand_kit_id ?? undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        toast.error(data.error ?? "Retry failed");
+        return;
+      }
+
+      toast.success("Generation retried successfully");
+      setSelected(null);
+      router.refresh();
+    } catch {
+      toast.error("Network error — please try again");
+    } finally {
+      setRetrying(false);
+    }
   };
 
   const filters: { value: Filter; label: string }[] = [
@@ -153,7 +189,13 @@ export function GalleryContent({ initialGenerations, pageSize }: Props) {
           if (!open) setSelected(null);
         }}
       >
-        {selected && <GenerationDetail generation={selected} />}
+        {selected && (
+          <GenerationDetail
+            generation={selected}
+            onRetry={handleRetry}
+            retrying={retrying}
+          />
+        )}
       </Dialog>
     </>
   );
@@ -167,14 +209,20 @@ function GenerationCard({
   onClick: () => void;
 }) {
   const imageUrl = generation.thumbnail_url ?? generation.output_url;
+  const isFailed = generation.status === "failed";
 
   return (
     <Card
-      className="cursor-pointer transition-shadow hover:ring-2 hover:ring-ring/30"
+      className={`cursor-pointer transition-shadow hover:ring-2 hover:ring-ring/30 ${isFailed ? "ring-1 ring-destructive/30" : ""}`}
       onClick={onClick}
     >
       <div className="relative aspect-square w-full overflow-hidden rounded-t-xl bg-muted">
-        {imageUrl ? (
+        {isFailed ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2">
+            <AlertCircle className="size-8 text-destructive/60" />
+            <span className="text-xs text-destructive/80">Failed</span>
+          </div>
+        ) : imageUrl ? (
           <Image
             src={imageUrl}
             alt={generation.prompt.slice(0, 80)}
@@ -191,13 +239,16 @@ function GenerationCard({
             )}
           </div>
         )}
-        <Badge variant="secondary" className="absolute top-2 left-2 capitalize">
+        <Badge
+          variant={isFailed ? "destructive" : "secondary"}
+          className="absolute top-2 left-2 capitalize"
+        >
           {generation.content_type === "video" ? (
             <Film className="size-3" />
           ) : (
             <ImageIcon className="size-3" />
           )}
-          {generation.content_type}
+          {isFailed ? "failed" : generation.content_type}
         </Badge>
       </div>
       <CardContent className="space-y-2">
@@ -214,8 +265,17 @@ function GenerationCard({
   );
 }
 
-function GenerationDetail({ generation }: { generation: Generation }) {
+function GenerationDetail({
+  generation,
+  onRetry,
+  retrying,
+}: {
+  generation: Generation;
+  onRetry: (generation: Generation) => void;
+  retrying: boolean;
+}) {
   const imageUrl = generation.output_url ?? generation.thumbnail_url;
+  const isFailed = generation.status === "failed";
 
   return (
     <DialogContent className="sm:max-w-lg">
@@ -226,7 +286,36 @@ function GenerationDetail({ generation }: { generation: Generation }) {
         </DialogDescription>
       </DialogHeader>
 
-      {imageUrl ? (
+      {isFailed ? (
+        <div className="flex aspect-square flex-col items-center justify-center gap-3 rounded-lg bg-muted">
+          <AlertCircle className="size-12 text-destructive/60" />
+          <div className="text-center">
+            <p className="text-sm font-medium text-destructive">Generation Failed</p>
+            {generation.error_message && (
+              <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+                {generation.error_message}
+              </p>
+            )}
+          </div>
+          <Button
+            size="sm"
+            onClick={() => onRetry(generation)}
+            disabled={retrying}
+          >
+            {retrying ? (
+              <>
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                Retrying...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="mr-1.5 size-3.5" />
+                Retry Generation
+              </>
+            )}
+          </Button>
+        </div>
+      ) : imageUrl ? (
         <div className="relative aspect-square w-full overflow-hidden rounded-lg bg-muted">
           <Image
             src={imageUrl}

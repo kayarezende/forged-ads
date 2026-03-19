@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -16,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { BrandKitSelector } from "@/components/BrandKitSelector";
-import { Loader2, Download, RefreshCw, Sparkles, ArrowLeft } from "lucide-react";
+import { Loader2, Download, RefreshCw, Sparkles, ArrowLeft, Clock } from "lucide-react";
 import type { Template, TemplateVariable } from "@/types";
 
 interface GenerationResult {
@@ -42,6 +43,29 @@ export function GuidedFlow({ template }: { template: Template }) {
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<GenerationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [rateLimitCountdown, setRateLimitCountdown] = useState(0);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startCountdown = useCallback((seconds: number) => {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    setRateLimitCountdown(seconds);
+    countdownRef.current = setInterval(() => {
+      setRateLimitCountdown((prev) => {
+        if (prev <= 1) {
+          if (countdownRef.current) clearInterval(countdownRef.current);
+          countdownRef.current = null;
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, []);
 
   function setVariable(name: string, value: string) {
     setVariables((prev) => ({ ...prev, [name]: value }));
@@ -56,7 +80,7 @@ export function GuidedFlow({ template }: { template: Template }) {
   });
 
   async function handleGenerate() {
-    if (!allFilled) return;
+    if (!allFilled || rateLimitCountdown > 0) return;
 
     setGenerating(true);
     setError(null);
@@ -77,13 +101,30 @@ export function GuidedFlow({ template }: { template: Template }) {
       const data = await res.json();
 
       if (!res.ok) {
+        if (res.status === 429) {
+          const retryAfter = data.retryAfter ?? parseInt(res.headers.get("Retry-After") ?? "60", 10);
+          startCountdown(retryAfter);
+          toast.error("Rate limit exceeded", {
+            description: `Please wait ${retryAfter} seconds before generating again.`,
+          });
+        } else if (res.status === 402) {
+          toast.error("Insufficient credits", {
+            description: "Top up your credits to continue generating.",
+          });
+        } else {
+          toast.error(data.error ?? "Generation failed");
+        }
         setError(data.error ?? "Generation failed");
         return;
       }
 
       setResult(data as GenerationResult);
+      toast.success("Image generated successfully");
     } catch {
       setError("Network error — please try again");
+      toast.error("Network error", {
+        description: "Please check your connection and try again.",
+      });
     } finally {
       setGenerating(false);
     }
@@ -165,7 +206,7 @@ export function GuidedFlow({ template }: { template: Template }) {
           {/* Generate button */}
           <Button
             onClick={handleGenerate}
-            disabled={!allFilled || generating}
+            disabled={!allFilled || generating || rateLimitCountdown > 0}
             className="w-full"
             size="lg"
           >
@@ -173,6 +214,11 @@ export function GuidedFlow({ template }: { template: Template }) {
               <>
                 <Loader2 className="mr-2 size-4 animate-spin" />
                 Generating...
+              </>
+            ) : rateLimitCountdown > 0 ? (
+              <>
+                <Clock className="mr-2 size-4" />
+                Wait {rateLimitCountdown}s
               </>
             ) : (
               <>

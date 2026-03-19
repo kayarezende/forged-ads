@@ -4,6 +4,7 @@ import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
+import { toast } from "sonner";
 import { createBrowserClient } from "@supabase/ssr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -153,13 +154,17 @@ export function BrandKitForm({ brandKit }: BrandKitFormProps) {
 
       if (result.error) {
         setError(result.error);
+        toast.error(result.error);
         setSubmitting(false);
         return;
       }
 
+      toast.success(isEditing ? "Brand kit updated" : "Brand kit created");
       router.push("/dashboard/brand-kits");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      const msg = err instanceof Error ? err.message : "Something went wrong";
+      setError(msg);
+      toast.error(msg);
       setSubmitting(false);
     }
   }

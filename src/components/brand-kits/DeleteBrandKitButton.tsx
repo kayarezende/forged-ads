@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Trash2, Loader2 } from "lucide-react";
 import { deleteBrandKit } from "@/app/actions/brand-kits";
@@ -22,8 +23,9 @@ export function DeleteBrandKitButton({
     try {
       const result = await deleteBrandKit(id);
       if (result.error) {
-        alert(result.error);
+        toast.error(result.error);
       } else {
+        toast.success(`"${name}" deleted`);
         router.refresh();
       }
     } finally {
