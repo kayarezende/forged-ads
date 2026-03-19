@@ -20,3 +20,15 @@ export async function queryOne<T extends pg.QueryResultRow = pg.QueryResultRow>(
   const result = await pool.query<T>(text, params);
   return result.rows[0] ?? null;
 }
+
+function sqlTemplate(strings: TemplateStringsArray, ...values: unknown[]) {
+  const text = strings.reduce((acc, str, i) => acc + str + (i < values.length ? `$${i + 1}` : ''), '');
+  return pool.query(text, values);
+}
+
+export default Object.assign(sqlTemplate, {
+  async one<T = unknown>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T | null> {
+    const result = await sqlTemplate(strings, ...values);
+    return result.rows[0] ?? null;
+  }
+});
