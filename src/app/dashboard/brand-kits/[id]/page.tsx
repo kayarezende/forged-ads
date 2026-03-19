@@ -1,7 +1,13 @@
+import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { redirect, notFound } from "next/navigation";
 import { BrandKitForm } from "@/components/brand-kits/BrandKitForm";
 import type { BrandKit } from "@/types";
+
+export const metadata: Metadata = {
+  title: "Edit Brand Kit",
+  description: "Update your brand kit settings.",
+};
 
 export default async function EditBrandKitPage({
   params,

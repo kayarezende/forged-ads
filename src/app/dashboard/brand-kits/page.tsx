@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
@@ -8,6 +9,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DeleteBrandKitButton } from "@/components/brand-kits/DeleteBrandKitButton";
 import { Plus, Pencil, Palette } from "lucide-react";
+
+export const metadata: Metadata = {
+  title: "Brand Kits",
+  description: "Manage your brand kits — colors, fonts, logos, and tone of voice.",
+};
 
 export default async function BrandKitsPage() {
   const supabase = await createClient();

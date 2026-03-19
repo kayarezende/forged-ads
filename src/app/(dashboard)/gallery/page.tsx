@@ -5,8 +5,8 @@ import type { Generation } from "@/types";
 const PAGE_SIZE = 12;
 
 export const metadata = {
-  title: "Gallery — ForgedAds",
-  description: "Your generation history",
+  title: "Gallery",
+  description: "Browse and manage your AI-generated ad creatives.",
 };
 
 export default async function GalleryPage() {

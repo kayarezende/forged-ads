@@ -19,7 +19,10 @@ export async function generateMetadata({
     .single();
 
   return {
-    title: data ? `${data.name} — ForgedAds` : "Template — ForgedAds",
+    title: data ? data.name : "Template",
+    description: data
+      ? `Generate ad creatives with the ${data.name} template.`
+      : "Generate ad creatives with a template.",
   };
 }
 

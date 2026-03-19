@@ -3,8 +3,8 @@ import { TemplatesContent } from "./templates-content";
 import type { Template } from "@/types";
 
 export const metadata = {
-  title: "Templates — ForgedAds",
-  description: "Browse ad creative templates",
+  title: "Templates",
+  description: "Browse ad creative templates optimized for every major ad platform.",
 };
 
 export default async function TemplatesPage() {

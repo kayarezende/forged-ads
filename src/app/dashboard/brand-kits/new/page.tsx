@@ -1,8 +1,14 @@
+import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { PLANS } from "@/lib/constants";
 import type { SubscriptionTier } from "@/types";
 import { BrandKitForm } from "@/components/brand-kits/BrandKitForm";
+
+export const metadata: Metadata = {
+  title: "New Brand Kit",
+  description: "Create a new brand kit for consistent ad creatives.",
+};
 
 export default async function NewBrandKitPage() {
   const supabase = await createClient();

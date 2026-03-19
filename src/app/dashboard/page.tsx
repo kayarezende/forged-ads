@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { Card } from "@/components/ui/card";
@@ -6,6 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Image as ImageIcon, Video, Plus, Clock } from "lucide-react";
 import Link from "next/link";
 import type { Generation } from "@/types";
+
+export const metadata: Metadata = {
+  title: "Dashboard",
+  description: "Your ForgedAds dashboard — recent generations and quick actions.",
+};
 
 export default async function DashboardPage() {
   const supabase = await createClient();

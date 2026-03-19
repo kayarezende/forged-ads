@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { PLANS } from "@/lib/constants";
@@ -14,6 +15,11 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+
+export const metadata: Metadata = {
+  title: "Billing",
+  description: "Manage your subscription, credits, and billing.",
+};
 
 export default async function BillingPage() {
   const supabase = await createClient();
