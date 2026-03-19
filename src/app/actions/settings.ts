@@ -2,27 +2,28 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { query, queryOne } from "@/lib/db";
+import { getUserId, verifyPassword, updatePassword, destroySession } from "@/lib/auth";
+import { uploadFile, removeFile } from "@/lib/storage";
 
 export async function updateDisplayName(
   displayName: string
 ): Promise<{ error?: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated" };
+  let userId: string;
+  try {
+    userId = await getUserId();
+  } catch {
+    return { error: "Not authenticated" };
+  }
 
   const trimmed = displayName.trim();
   if (!trimmed) return { error: "Display name cannot be empty" };
   if (trimmed.length > 100) return { error: "Display name is too long" };
 
-  const { error } = await supabase
-    .from("profiles")
-    .update({ display_name: trimmed })
-    .eq("id", user.id);
-
-  if (error) return { error: error.message };
+  await query("UPDATE profiles SET display_name = $1 WHERE id = $2", [
+    trimmed,
+    userId,
+  ]);
 
   revalidatePath("/dashboard", "layout");
   return {};
@@ -31,11 +32,12 @@ export async function updateDisplayName(
 export async function uploadAvatar(
   formData: FormData
 ): Promise<{ error?: string; url?: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated" };
+  let userId: string;
+  try {
+    userId = await getUserId();
+  } catch {
+    return { error: "Not authenticated" };
+  }
 
   const file = formData.get("avatar") as File | null;
   if (!file || file.size === 0) return { error: "No file provided" };
@@ -48,62 +50,46 @@ export async function uploadAvatar(
   }
 
   const ext = file.name.split(".").pop() ?? "png";
-  const path = `${user.id}/avatar.${ext}`;
+  const key = `${userId}/avatar.${ext}`;
+  const buffer = Buffer.from(await file.arrayBuffer());
 
-  const { error: uploadError } = await supabase.storage
-    .from("avatars")
-    .upload(path, file, { upsert: true });
+  const publicUrl = await uploadFile("avatars", key, buffer, { upsert: true });
 
-  if (uploadError) return { error: uploadError.message };
-
-  const {
-    data: { publicUrl },
-  } = supabase.storage.from("avatars").getPublicUrl(path);
-
-  const { error: updateError } = await supabase
-    .from("profiles")
-    .update({ avatar_url: `${publicUrl}?t=${Date.now()}` })
-    .eq("id", user.id);
-
-  if (updateError) return { error: updateError.message };
+  await query(
+    "UPDATE profiles SET avatar_url = $1 WHERE id = $2",
+    [`${publicUrl}?t=${Date.now()}`, userId]
+  );
 
   revalidatePath("/dashboard", "layout");
   return { url: publicUrl };
 }
 
 export async function removeAvatar(): Promise<{ error?: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated" };
+  let userId: string;
+  try {
+    userId = await getUserId();
+  } catch {
+    return { error: "Not authenticated" };
+  }
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("avatar_url")
-    .eq("id", user.id)
-    .single();
+  const profile = await queryOne<{ avatar_url: string | null }>(
+    "SELECT avatar_url FROM profiles WHERE id = $1",
+    [userId]
+  );
 
   if (profile?.avatar_url) {
     try {
       const url = new URL(profile.avatar_url.split("?")[0]);
       const pathParts = url.pathname.split("/avatars/");
       if (pathParts[1]) {
-        await supabase.storage
-          .from("avatars")
-          .remove([decodeURIComponent(pathParts[1])]);
+        await removeFile("avatars", decodeURIComponent(pathParts[1]));
       }
     } catch {
       // Best-effort cleanup
     }
   }
 
-  const { error } = await supabase
-    .from("profiles")
-    .update({ avatar_url: null })
-    .eq("id", user.id);
-
-  if (error) return { error: error.message };
+  await query("UPDATE profiles SET avatar_url = NULL WHERE id = $1", [userId]);
 
   revalidatePath("/dashboard", "layout");
   return {};
@@ -113,47 +99,43 @@ export async function changePassword(
   currentPassword: string,
   newPassword: string
 ): Promise<{ error?: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user || !user.email) return { error: "Not authenticated" };
+  let userId: string;
+  try {
+    userId = await getUserId();
+  } catch {
+    return { error: "Not authenticated" };
+  }
+
+  const user = await queryOne<{ email: string }>(
+    "SELECT email FROM users WHERE id = $1",
+    [userId]
+  );
+  if (!user) return { error: "Not authenticated" };
 
   if (newPassword.length < 8) {
     return { error: "Password must be at least 8 characters" };
   }
 
-  // Verify current password by re-authenticating
-  const { error: signInError } = await supabase.auth.signInWithPassword({
-    email: user.email,
-    password: currentPassword,
-  });
+  const verified = await verifyPassword(user.email, currentPassword);
+  if (!verified) return { error: "Current password is incorrect" };
 
-  if (signInError) return { error: "Current password is incorrect" };
-
-  const { error } = await supabase.auth.updateUser({
-    password: newPassword,
-  });
-
-  if (error) return { error: error.message };
+  await updatePassword(userId, newPassword);
   return {};
 }
 
 export async function deleteAccount(): Promise<{ error?: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { error: "Not authenticated" };
+  let userId: string;
+  try {
+    userId = await getUserId();
+  } catch {
+    return { error: "Not authenticated" };
+  }
 
-  // Soft delete — set deleted_at on profile
-  const { error } = await supabase
-    .from("profiles")
-    .update({ deleted_at: new Date().toISOString() })
-    .eq("id", user.id);
+  await query(
+    "UPDATE profiles SET deleted_at = NOW() WHERE id = $1",
+    [userId]
+  );
 
-  if (error) return { error: error.message };
-
-  await supabase.auth.signOut();
+  await destroySession();
   redirect("/");
 }

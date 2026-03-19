@@ -1,8 +1,22 @@
-import postgres from "postgres";
+import pg from "pg";
 
-const sql = postgres(process.env.DATABASE_URL!, {
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
   max: 10,
-  idle_timeout: 20,
+  idleTimeoutMillis: 30_000,
 });
 
-export default sql;
+export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
+  text: string,
+  params?: unknown[]
+): Promise<pg.QueryResult<T>> {
+  return pool.query<T>(text, params);
+}
+
+export async function queryOne<T extends pg.QueryResultRow = pg.QueryResultRow>(
+  text: string,
+  params?: unknown[]
+): Promise<T | null> {
+  const result = await pool.query<T>(text, params);
+  return result.rows[0] ?? null;
+}
