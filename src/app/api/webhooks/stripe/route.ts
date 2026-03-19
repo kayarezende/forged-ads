@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe/client";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { query, queryOne } from "@/lib/db";
 import { grantCredits } from "@/lib/credits";
 import { PLANS, STRIPE_PRICE_IDS } from "@/lib/constants";
 import type Stripe from "stripe";
@@ -24,8 +24,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
-  const supabase = createAdminClient();
-
   switch (event.type) {
     case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session;
@@ -40,18 +38,19 @@ export async function POST(req: Request) {
             ? session.subscription
             : session.subscription.id;
 
-        await supabase
-          .from("profiles")
-          .update({
-            stripe_subscription_id: subId,
-            subscription_tier: tier,
-            subscription_status: "active",
-            credits_used_this_period: 0,
-            period_reset_at: new Date(
-              Date.now() + 30 * 24 * 60 * 60 * 1000
-            ).toISOString(),
-          })
-          .eq("id", userId);
+        await query(
+          `UPDATE public.profiles
+           SET stripe_subscription_id = $1, subscription_tier = $2,
+               subscription_status = 'active', credits_used_this_period = 0,
+               period_reset_at = $3
+           WHERE id = $4`,
+          [
+            subId,
+            tier,
+            new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+            userId,
+          ]
+        );
 
         // Grant initial credits for the new subscription
         const plan = PLANS[tier];
@@ -89,11 +88,10 @@ export async function POST(req: Request) {
           : invoiceSub.id;
 
       // Find user by subscription ID
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("id, subscription_tier")
-        .eq("stripe_subscription_id", subId)
-        .single();
+      const profile = await queryOne<{ id: string; subscription_tier: string }>(
+        `SELECT id, subscription_tier FROM public.profiles WHERE stripe_subscription_id = $1`,
+        [subId]
+      );
 
       if (!profile) break;
 
@@ -103,16 +101,16 @@ export async function POST(req: Request) {
 
       // Monthly renewal — reset usage and grant credits
       const plan = PLANS[profile.subscription_tier as SubscriptionTier];
-      await supabase
-        .from("profiles")
-        .update({
-          subscription_status: "active",
-          credits_used_this_period: 0,
-          period_reset_at: new Date(
-            Date.now() + 30 * 24 * 60 * 60 * 1000
-          ).toISOString(),
-        })
-        .eq("id", profile.id);
+      await query(
+        `UPDATE public.profiles
+         SET subscription_status = 'active', credits_used_this_period = 0,
+             period_reset_at = $1
+         WHERE id = $2`,
+        [
+          new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          profile.id,
+        ]
+      );
 
       await grantCredits(
         profile.id,
@@ -131,11 +129,10 @@ export async function POST(req: Request) {
           ? subscription.customer
           : subscription.customer.id;
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("stripe_customer_id", customerId)
-        .single();
+      const profile = await queryOne<{ id: string }>(
+        `SELECT id FROM public.profiles WHERE stripe_customer_id = $1`,
+        [customerId]
+      );
       if (!profile) break;
 
       // Map Stripe status to our status
@@ -155,14 +152,17 @@ export async function POST(req: Request) {
         Object.entries(STRIPE_PRICE_IDS) as [SubscriptionTier, string | undefined][]
       ).find(([, id]) => id === priceId)?.[0];
 
-      const updates: Record<string, unknown> = {
-        subscription_status: newStatus,
-      };
       if (tierForPrice) {
-        updates.subscription_tier = tierForPrice;
+        await query(
+          `UPDATE public.profiles SET subscription_status = $1, subscription_tier = $2 WHERE id = $3`,
+          [newStatus, tierForPrice, profile.id]
+        );
+      } else {
+        await query(
+          `UPDATE public.profiles SET subscription_status = $1 WHERE id = $2`,
+          [newStatus, profile.id]
+        );
       }
-
-      await supabase.from("profiles").update(updates).eq("id", profile.id);
       break;
     }
 
@@ -173,20 +173,16 @@ export async function POST(req: Request) {
           ? subscription.customer
           : subscription.customer.id;
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("stripe_customer_id", customerId)
-        .single();
+      const profile = await queryOne<{ id: string }>(
+        `SELECT id FROM public.profiles WHERE stripe_customer_id = $1`,
+        [customerId]
+      );
       if (!profile) break;
 
-      await supabase
-        .from("profiles")
-        .update({
-          subscription_status: "canceled",
-          stripe_subscription_id: null,
-        })
-        .eq("id", profile.id);
+      await query(
+        `UPDATE public.profiles SET subscription_status = 'canceled', stripe_subscription_id = NULL WHERE id = $1`,
+        [profile.id]
+      );
       break;
     }
   }

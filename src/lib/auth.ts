@@ -1,24 +1,67 @@
 import { cookies } from "next/headers";
 import { query, queryOne } from "./db";
 import bcrypt from "bcryptjs";
+import type { Profile } from "@/types";
 
 const SESSION_COOKIE = "session_token";
+const DEFAULT_USER_ID = "00000000-0000-0000-0000-000000000001";
 
-export async function getUserId(): Promise<string> {
+interface SessionUser {
+  id: string;
+  email: string;
+  display_name: string | null;
+}
+
+/**
+ * Get the current user from session cookie.
+ * Falls back to default admin user if no session (no auth wall).
+ */
+export async function getCurrentUser(): Promise<SessionUser> {
   const cookieStore = await cookies();
-  const token = cookieStore.get(SESSION_COOKIE)?.value;
-  if (!token) throw new Error("Not authenticated");
+  const sessionToken = cookieStore.get(SESSION_COOKIE)?.value;
 
-  const session = await queryOne<{ user_id: string; expires_at: Date }>(
-    "SELECT user_id, expires_at FROM sessions WHERE token = $1",
-    [token]
-  );
+  if (sessionToken) {
+    const session = await queryOne<{ user_id: string }>(
+      `SELECT user_id FROM public.sessions
+       WHERE token = $1 AND expires_at > now()`,
+      [sessionToken]
+    );
 
-  if (!session || new Date(session.expires_at) < new Date()) {
-    throw new Error("Not authenticated");
+    if (session) {
+      const user = await queryOne<SessionUser>(
+        `SELECT id, email, display_name FROM public.users WHERE id = $1`,
+        [session.user_id]
+      );
+      if (user) return user;
+    }
   }
 
-  return session.user_id;
+  // No auth wall — fall back to default user
+  const user = await queryOne<SessionUser>(
+    `SELECT id, email, display_name FROM public.users WHERE id = $1`,
+    [DEFAULT_USER_ID]
+  );
+
+  return user ?? { id: DEFAULT_USER_ID, email: "admin@forgedads.local", display_name: "Admin" };
+}
+
+/**
+ * Get the current user's profile with subscription/credit info.
+ */
+export async function getCurrentProfile(): Promise<Profile | null> {
+  const user = await getCurrentUser();
+  return queryOne<Profile>(
+    `SELECT * FROM public.profiles WHERE id = $1`,
+    [user.id]
+  );
+}
+
+/**
+ * Get just the user ID (lightweight — for API routes).
+ */
+export async function getUserId(): Promise<string> {
+  const user = await getCurrentUser();
+  return user.id;
 }
 
 export async function getUserIdOrNull(): Promise<string | null> {

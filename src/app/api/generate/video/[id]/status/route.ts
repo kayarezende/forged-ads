@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { getUserId } from "@/lib/auth";
+import { query, queryOne } from "@/lib/db";
+import { saveFile } from "@/lib/storage";
 import { refundCredits } from "@/lib/credits";
 import { pollVideoOperation } from "@/lib/ai/gemini-veo";
 import { CREDIT_COSTS } from "@/lib/constants";
@@ -13,23 +14,24 @@ export async function GET(
     const { id: generationId } = await params;
 
     // 1. Authenticate
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const userId = await getUserId();
 
     // 2. Fetch generation record (must belong to user)
-    const admin = createAdminClient();
-    const { data: generation } = await admin
-      .from("generations")
-      .select("*")
-      .eq("id", generationId)
-      .eq("user_id", user.id)
-      .single();
+    const generation = await queryOne<{
+      id: string;
+      user_id: string;
+      status: string;
+      output_url: string | null;
+      generation_time_ms: number | null;
+      error_message: string | null;
+      metadata: Record<string, unknown>;
+      created_at: string;
+    }>(
+      `SELECT id, user_id, status, output_url, generation_time_ms, error_message, metadata, created_at
+       FROM public.generations
+       WHERE id = $1 AND user_id = $2`,
+      [generationId, userId]
+    );
 
     if (!generation) {
       return NextResponse.json(
@@ -57,7 +59,7 @@ export async function GET(
     }
 
     // 3. Poll the Veo operation
-    const metadata = generation.metadata as Record<string, unknown>;
+    const metadata = generation.metadata;
     const operationName = metadata?.veo_operation_name as string | undefined;
 
     if (!operationName) {
@@ -76,7 +78,7 @@ export async function GET(
       });
     }
 
-    // 4. Video is done — download and upload to Supabase Storage
+    // 4. Video is done — download and save to local storage
     const generationTimeMs =
       new Date().getTime() - new Date(generation.created_at).getTime();
 
@@ -93,36 +95,28 @@ export async function GET(
       }
       const videoBuffer = Buffer.from(await videoResponse.arrayBuffer());
 
-      // Upload to Supabase Storage
-      const filePath = `${user.id}/${generationId}.mp4`;
-      const { error: uploadError } = await admin.storage
-        .from("generations")
-        .upload(filePath, videoBuffer, {
-          contentType: "video/mp4",
-          upsert: false,
-        });
-
-      if (uploadError) {
-        throw new Error(`Storage upload failed: ${uploadError.message}`);
-      }
-
-      const {
-        data: { publicUrl },
-      } = admin.storage.from("generations").getPublicUrl(filePath);
+      // Save to local storage
+      const publicUrl = await saveFile(videoBuffer, {
+        directory: "generations",
+        filename: `${generationId}.mp4`,
+        extension: "mp4",
+      });
 
       // 5. Update generation record
-      await admin
-        .from("generations")
-        .update({
-          status: "completed",
-          output_url: publicUrl,
-          generation_time_ms: generationTimeMs,
-          metadata: {
+      await query(
+        `UPDATE public.generations
+         SET status = 'completed', output_url = $1, generation_time_ms = $2, metadata = $3
+         WHERE id = $4`,
+        [
+          publicUrl,
+          generationTimeMs,
+          JSON.stringify({
             ...metadata,
             veo_operation_done: true,
-          },
-        })
-        .eq("id", generationId);
+          }),
+          generationId,
+        ]
+      );
 
       return NextResponse.json({
         id: generationId,
@@ -131,9 +125,9 @@ export async function GET(
         generationTimeMs,
       });
     } catch (uploadError) {
-      // Video generation succeeded but upload/processing failed — refund credits
+      // Video generation succeeded but save/processing failed — refund credits
       try {
-        await refundCredits(user.id, CREDIT_COSTS.video, generationId);
+        await refundCredits(userId, CREDIT_COSTS.video, generationId);
       } catch {
         // Refund failed — log but don't mask original error
       }
@@ -143,13 +137,10 @@ export async function GET(
           ? uploadError.message
           : "Failed to process video";
 
-      await admin
-        .from("generations")
-        .update({
-          status: "failed",
-          error_message: errorMessage,
-        })
-        .eq("id", generationId);
+      await query(
+        `UPDATE public.generations SET status = 'failed', error_message = $1 WHERE id = $2`,
+        [errorMessage, generationId]
+      );
 
       return NextResponse.json({
         id: generationId,

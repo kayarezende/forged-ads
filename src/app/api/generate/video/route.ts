@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { deductCredits, refundCredits } from "@/lib/credits";
+import { getUserId } from "@/lib/auth";
+import { query, queryOne } from "@/lib/db";
+import { deductCredits, refundCredits, checkRateLimit } from "@/lib/credits";
 import { submitVideoGeneration } from "@/lib/ai/gemini-veo";
-import { CREDIT_COSTS, RATE_LIMITS, AI_MODELS, PLANS } from "@/lib/constants";
+import { CREDIT_COSTS, AI_MODELS, PLANS } from "@/lib/constants";
 import type { SubscriptionTier } from "@/types";
 
 type VideoAspectRatio = "16:9" | "9:16";
@@ -14,23 +14,16 @@ export async function POST(request: Request) {
 
   try {
     // 1. Authenticate
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    userId = user.id;
+    userId = await getUserId();
 
     // 2. Check subscription tier allows video
-    const admin = createAdminClient();
-    const { data: profile } = await admin
-      .from("profiles")
-      .select("subscription_tier, credits_balance")
-      .eq("id", userId)
-      .single();
+    const profile = await queryOne<{
+      subscription_tier: string;
+      credits_balance: number;
+    }>(
+      `SELECT subscription_tier, credits_balance FROM public.profiles WHERE id = $1`,
+      [userId]
+    );
 
     if (!profile) {
       return NextResponse.json({ error: "Profile not found" }, { status: 404 });
@@ -82,12 +75,7 @@ export async function POST(request: Request) {
     }
 
     // 5. Rate limit check
-    const { data: withinLimit } = await admin.rpc("check_rate_limit", {
-      p_user_id: userId,
-      p_window_seconds: RATE_LIMITS.windowSeconds,
-      p_max_requests: RATE_LIMITS.maxRequests,
-    });
-
+    const withinLimit = await checkRateLimit(userId);
     if (!withinLimit) {
       return NextResponse.json(
         { error: "Rate limit exceeded. Please wait a moment." },
@@ -96,22 +84,22 @@ export async function POST(request: Request) {
     }
 
     // 6. Create pending generation record
-    const { data: generation, error: genError } = await admin
-      .from("generations")
-      .insert({
-        user_id: userId,
-        content_type: "video" as const,
-        model: AI_MODELS.video,
-        prompt: prompt.trim(),
-        aspect_ratio: aspectRatio,
-        status: "pending" as const,
-        credits_cost: CREDIT_COSTS.video,
-        metadata: { original_prompt: prompt.trim() },
-      })
-      .select("id")
-      .single();
+    const generation = await queryOne<{ id: string }>(
+      `INSERT INTO public.generations
+        (user_id, content_type, model, prompt, aspect_ratio, status, credits_cost, metadata)
+       VALUES ($1, 'video', $2, $3, $4, 'pending', $5, $6)
+       RETURNING id`,
+      [
+        userId,
+        AI_MODELS.video,
+        prompt.trim(),
+        aspectRatio,
+        CREDIT_COSTS.video,
+        JSON.stringify({ original_prompt: prompt.trim() }),
+      ]
+    );
 
-    if (genError || !generation) {
+    if (!generation) {
       return NextResponse.json(
         { error: "Failed to create generation record" },
         { status: 500 }
@@ -128,10 +116,10 @@ export async function POST(request: Request) {
     );
 
     if (deductResult === null) {
-      await admin
-        .from("generations")
-        .update({ status: "failed", error_message: "Insufficient credits" })
-        .eq("id", generationId);
+      await query(
+        `UPDATE public.generations SET status = 'failed', error_message = 'Insufficient credits' WHERE id = $1`,
+        [generationId]
+      );
 
       return NextResponse.json(
         { error: "Insufficient credits" },
@@ -140,10 +128,10 @@ export async function POST(request: Request) {
     }
 
     // 8. Submit to Veo API
-    await admin
-      .from("generations")
-      .update({ status: "generating" })
-      .eq("id", generationId);
+    await query(
+      `UPDATE public.generations SET status = 'generating' WHERE id = $1`,
+      [generationId]
+    );
 
     const veoResult = await submitVideoGeneration({
       prompt: prompt.trim(),
@@ -156,15 +144,16 @@ export async function POST(request: Request) {
       throw new Error("No operation name returned from Veo API");
     }
 
-    await admin
-      .from("generations")
-      .update({
-        metadata: {
+    await query(
+      `UPDATE public.generations SET metadata = $1 WHERE id = $2`,
+      [
+        JSON.stringify({
           original_prompt: prompt.trim(),
           veo_operation_name: operationName,
-        },
-      })
-      .eq("id", generationId);
+        }),
+        generationId,
+      ]
+    );
 
     return NextResponse.json({
       id: generationId,
@@ -180,15 +169,10 @@ export async function POST(request: Request) {
         // Refund failed — log but don't mask original error
       }
 
-      const admin = createAdminClient();
-      await admin
-        .from("generations")
-        .update({
-          status: "failed",
-          error_message:
-            error instanceof Error ? error.message : "Unknown error",
-        })
-        .eq("id", generationId);
+      await query(
+        `UPDATE public.generations SET status = 'failed', error_message = $1 WHERE id = $2`,
+        [error instanceof Error ? error.message : "Unknown error", generationId]
+      );
     }
 
     const message =

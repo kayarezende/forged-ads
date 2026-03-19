@@ -3,14 +3,14 @@ import path from "node:path";
 import crypto from "node:crypto";
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? "uploads";
+const PUBLIC_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
 async function ensureDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
 }
 
 function publicUrl(filePath: string): string {
-  const base = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-  return `${base}/${filePath}`;
+  return `${PUBLIC_URL}/${filePath}`;
 }
 
 export async function uploadFile(
@@ -41,4 +41,42 @@ export async function removeFile(
 export function generateKey(prefix: string, ext: string): string {
   const id = crypto.randomUUID();
   return `${prefix}/${id}.${ext}`;
+}
+
+/**
+ * Save a file to local disk storage.
+ * Returns the public URL to access it.
+ */
+export async function saveFile(
+  buffer: Buffer,
+  opts: {
+    directory: string;
+    filename?: string;
+    extension?: string;
+  }
+): Promise<string> {
+  const ext = opts.extension ?? "png";
+  const filename = opts.filename ?? `${crypto.randomUUID()}.${ext}`;
+  const dir = path.join(UPLOAD_DIR, opts.directory);
+
+  await ensureDir(dir);
+  await fs.writeFile(path.join(dir, filename), buffer);
+
+  return `${PUBLIC_URL}/uploads/${opts.directory}/${filename}`;
+}
+
+/**
+ * Save a base64-encoded file to local disk.
+ */
+export async function saveBase64File(
+  base64Data: string,
+  opts: {
+    directory: string;
+    filename?: string;
+    extension?: string;
+  }
+): Promise<string> {
+  const raw = base64Data.replace(/^data:[^;]+;base64,/, "");
+  const buffer = Buffer.from(raw, "base64");
+  return saveFile(buffer, opts);
 }

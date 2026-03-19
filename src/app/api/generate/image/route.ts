@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { deductCredits, refundCredits } from "@/lib/credits";
+import { getUserId } from "@/lib/auth";
+import { query, queryOne } from "@/lib/db";
+import { saveBase64File } from "@/lib/storage";
+import { deductCredits, refundCredits, checkRateLimit } from "@/lib/credits";
 import { buildPrompt } from "@/lib/ai/prompt-builder";
 import { generateImage } from "@/lib/ai/openrouter";
-import { CREDIT_COSTS, RATE_LIMITS, AI_MODELS } from "@/lib/constants";
+import { CREDIT_COSTS, AI_MODELS } from "@/lib/constants";
 import type { AspectRatio, BrandKit, Template } from "@/types";
 
 export async function POST(request: Request) {
@@ -13,15 +14,7 @@ export async function POST(request: Request) {
 
   try {
     // 1. Authenticate
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    userId = user.id;
+    userId = await getUserId();
 
     // 2. Parse & validate body
     const body = await request.json();
@@ -57,19 +50,16 @@ export async function POST(request: Request) {
     // Fetch template if using guided mode
     let template: Template | null = null;
     if (templateId) {
-      const { data } = await supabase
-        .from("templates")
-        .select("*")
-        .eq("id", templateId)
-        .eq("is_active", true)
-        .single();
-      if (!data) {
+      template = await queryOne<Template>(
+        `SELECT * FROM public.templates WHERE id = $1 AND is_active = true`,
+        [templateId]
+      );
+      if (!template) {
         return NextResponse.json(
           { error: "Template not found" },
           { status: 404 }
         );
       }
-      template = data as Template;
     }
 
     // Use template aspect ratio if in guided mode, otherwise use provided
@@ -84,22 +74,16 @@ export async function POST(request: Request) {
     }
 
     // 3. Rate limit check
-    const admin = createAdminClient();
-    const { data: withinLimit } = await admin.rpc("check_rate_limit", {
-      p_user_id: userId,
-      p_window_seconds: RATE_LIMITS.windowSeconds,
-      p_max_requests: RATE_LIMITS.maxRequests,
-    });
-
+    const withinLimit = await checkRateLimit(userId);
     if (!withinLimit) {
       return NextResponse.json(
         {
           error: "Rate limit exceeded. Please wait before generating again.",
-          retryAfter: RATE_LIMITS.windowSeconds,
+          retryAfter: 60,
         },
         {
           status: 429,
-          headers: { "Retry-After": String(RATE_LIMITS.windowSeconds) },
+          headers: { "Retry-After": "60" },
         }
       );
     }
@@ -107,12 +91,10 @@ export async function POST(request: Request) {
     // 4. Fetch optional brand kit
     let brandKit: BrandKit | null = null;
     if (brandKitId) {
-      const { data } = await supabase
-        .from("brand_kits")
-        .select("*")
-        .eq("id", brandKitId)
-        .single();
-      brandKit = data;
+      brandKit = await queryOne<BrandKit>(
+        `SELECT * FROM public.brand_kits WHERE id = $1`,
+        [brandKitId]
+      );
     }
 
     // 5. Build the prompt
@@ -124,28 +106,29 @@ export async function POST(request: Request) {
     });
 
     // 6. Create pending generation record
-    const { data: generation, error: genError } = await admin
-      .from("generations")
-      .insert({
-        user_id: userId,
-        brand_kit_id: brandKitId ?? null,
-        template_id: templateId ?? null,
-        content_type: "image" as const,
-        model: AI_MODELS.image,
-        prompt: finalPrompt,
-        aspect_ratio: effectiveAspectRatio,
-        status: "pending" as const,
-        credits_cost: CREDIT_COSTS.image,
-        metadata: {
+    const generation = await queryOne<{ id: string }>(
+      `INSERT INTO public.generations
+        (user_id, brand_kit_id, template_id, content_type, model, prompt,
+         aspect_ratio, status, credits_cost, metadata)
+       VALUES ($1, $2, $3, 'image', $4, $5, $6, 'pending', $7, $8)
+       RETURNING id`,
+      [
+        userId,
+        brandKitId ?? null,
+        templateId ?? null,
+        AI_MODELS.image,
+        finalPrompt,
+        effectiveAspectRatio,
+        CREDIT_COSTS.image,
+        JSON.stringify({
           original_prompt: prompt?.trim() ?? null,
           template_id: templateId ?? null,
           template_variables: variables ?? null,
-        },
-      })
-      .select("id")
-      .single();
+        }),
+      ]
+    );
 
-    if (genError || !generation) {
+    if (!generation) {
       return NextResponse.json(
         { error: "Failed to create generation record" },
         { status: 500 }
@@ -162,10 +145,10 @@ export async function POST(request: Request) {
     );
 
     if (deductResult === null) {
-      await admin
-        .from("generations")
-        .update({ status: "failed", error_message: "Insufficient credits" })
-        .eq("id", generationId);
+      await query(
+        `UPDATE public.generations SET status = 'failed', error_message = 'Insufficient credits' WHERE id = $1`,
+        [generationId]
+      );
 
       return NextResponse.json(
         { error: "Insufficient credits" },
@@ -174,10 +157,10 @@ export async function POST(request: Request) {
     }
 
     // 8. Update status to generating
-    await admin
-      .from("generations")
-      .update({ status: "generating" })
-      .eq("id", generationId);
+    await query(
+      `UPDATE public.generations SET status = 'generating' WHERE id = $1`,
+      [generationId]
+    );
 
     // 9. Call OpenRouter
     const startTime = Date.now();
@@ -193,41 +176,31 @@ export async function POST(request: Request) {
       throw new Error("No image data in response");
     }
 
-    // 11. Upload to Supabase Storage
-    const filePath = `${userId}/${generationId}.png`;
-    const buffer = Buffer.from(imageData.base64, "base64");
-
-    const { error: uploadError } = await admin.storage
-      .from("generations")
-      .upload(filePath, buffer, {
-        contentType: imageData.mimeType,
-        upsert: false,
-      });
-
-    if (uploadError) {
-      throw new Error(`Storage upload failed: ${uploadError.message}`);
-    }
-
-    const {
-      data: { publicUrl },
-    } = admin.storage.from("generations").getPublicUrl(filePath);
+    // 11. Save to local storage
+    const publicUrl = await saveBase64File(imageData.base64, {
+      directory: "generations",
+      filename: `${generationId}.png`,
+      extension: "png",
+    });
 
     // 12. Update generation record to completed
-    await admin
-      .from("generations")
-      .update({
-        status: "completed",
-        output_url: publicUrl,
-        thumbnail_url: publicUrl,
-        generation_time_ms: generationTimeMs,
-        metadata: {
+    await query(
+      `UPDATE public.generations
+       SET status = 'completed', output_url = $1, thumbnail_url = $1,
+           generation_time_ms = $2, metadata = $3
+       WHERE id = $4`,
+      [
+        publicUrl,
+        generationTimeMs,
+        JSON.stringify({
           original_prompt: prompt?.trim() ?? null,
           template_id: templateId ?? null,
           model_used: result.model,
           usage: result.usage,
-        },
-      })
-      .eq("id", generationId);
+        }),
+        generationId,
+      ]
+    );
 
     return NextResponse.json({
       id: generationId,
@@ -244,15 +217,10 @@ export async function POST(request: Request) {
         // Refund failed — log but don't mask original error
       }
 
-      const admin = createAdminClient();
-      await admin
-        .from("generations")
-        .update({
-          status: "failed",
-          error_message:
-            error instanceof Error ? error.message : "Unknown error",
-        })
-        .eq("id", generationId);
+      await query(
+        `UPDATE public.generations SET status = 'failed', error_message = $1 WHERE id = $2`,
+        [error instanceof Error ? error.message : "Unknown error", generationId]
+      );
     }
 
     const message =
