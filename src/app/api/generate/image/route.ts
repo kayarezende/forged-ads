@@ -5,7 +5,7 @@ import { deductCredits, refundCredits } from "@/lib/credits";
 import { buildPrompt } from "@/lib/ai/prompt-builder";
 import { generateImage } from "@/lib/ai/openrouter";
 import { CREDIT_COSTS, RATE_LIMITS, AI_MODELS } from "@/lib/constants";
-import type { AspectRatio, BrandKit } from "@/types";
+import type { AspectRatio, BrandKit, Template } from "@/types";
 
 export async function POST(request: Request) {
   let generationId = "";
@@ -27,30 +27,56 @@ export async function POST(request: Request) {
     const body = await request.json();
     const {
       prompt,
+      templateId,
+      variables,
       aspectRatio = "1:1",
       brandKitId,
     } = body as {
       prompt?: string;
+      templateId?: string;
+      variables?: Record<string, string>;
       aspectRatio?: AspectRatio;
       brandKitId?: string;
     };
 
-    if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
+    // Either prompt (freeform) or templateId+variables (guided) is required
+    if (!templateId && (!prompt || typeof prompt !== "string" || prompt.trim().length === 0)) {
       return NextResponse.json(
-        { error: "Prompt is required" },
+        { error: "Prompt or template is required" },
         { status: 400 }
       );
     }
 
-    if (prompt.length > 2000) {
+    if (prompt && prompt.length > 2000) {
       return NextResponse.json(
         { error: "Prompt must be under 2000 characters" },
         { status: 400 }
       );
     }
 
+    // Fetch template if using guided mode
+    let template: Template | null = null;
+    if (templateId) {
+      const { data } = await supabase
+        .from("templates")
+        .select("*")
+        .eq("id", templateId)
+        .eq("is_active", true)
+        .single();
+      if (!data) {
+        return NextResponse.json(
+          { error: "Template not found" },
+          { status: 404 }
+        );
+      }
+      template = data as Template;
+    }
+
+    // Use template aspect ratio if in guided mode, otherwise use provided
+    const effectiveAspectRatio = template ? (template.aspect_ratio as AspectRatio) : aspectRatio;
+
     const validRatios: AspectRatio[] = ["1:1", "4:5", "9:16", "16:9"];
-    if (!validRatios.includes(aspectRatio)) {
+    if (!validRatios.includes(effectiveAspectRatio)) {
       return NextResponse.json(
         { error: "Invalid aspect ratio" },
         { status: 400 }
@@ -85,8 +111,10 @@ export async function POST(request: Request) {
 
     // 5. Build the prompt
     const finalPrompt = buildPrompt({
-      userPrompt: prompt.trim(),
+      userPrompt: prompt?.trim() ?? "",
       brandKit,
+      template,
+      variables,
     });
 
     // 6. Create pending generation record
@@ -95,13 +123,18 @@ export async function POST(request: Request) {
       .insert({
         user_id: userId,
         brand_kit_id: brandKitId ?? null,
+        template_id: templateId ?? null,
         content_type: "image" as const,
         model: AI_MODELS.image,
         prompt: finalPrompt,
-        aspect_ratio: aspectRatio,
+        aspect_ratio: effectiveAspectRatio,
         status: "pending" as const,
         credits_cost: CREDIT_COSTS.image,
-        metadata: { original_prompt: prompt.trim() },
+        metadata: {
+          original_prompt: prompt?.trim() ?? null,
+          template_id: templateId ?? null,
+          template_variables: variables ?? null,
+        },
       })
       .select("id")
       .single();
@@ -144,7 +177,7 @@ export async function POST(request: Request) {
     const startTime = Date.now();
     const result = await generateImage({
       prompt: finalPrompt,
-      aspectRatio,
+      aspectRatio: effectiveAspectRatio,
     });
     const generationTimeMs = Date.now() - startTime;
 
@@ -182,7 +215,8 @@ export async function POST(request: Request) {
         thumbnail_url: publicUrl,
         generation_time_ms: generationTimeMs,
         metadata: {
-          original_prompt: prompt.trim(),
+          original_prompt: prompt?.trim() ?? null,
+          template_id: templateId ?? null,
           model_used: result.model,
           usage: result.usage,
         },

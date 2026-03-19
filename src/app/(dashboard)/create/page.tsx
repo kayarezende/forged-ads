@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -105,11 +106,16 @@ export default function CreatePage() {
                 <CardHeader>
                   <CardTitle className="text-base">Guided Mode</CardTitle>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-3">
                   <p className="text-sm text-muted-foreground">
-                    Template-based generation coming soon. Use Freeform mode to
-                    get started.
+                    Choose a template to generate with guided variable inputs.
                   </p>
+                  <Link
+                    href="/dashboard/templates"
+                    className="inline-flex h-10 items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium ring-offset-background transition-colors hover:bg-accent hover:text-accent-foreground"
+                  >
+                    Browse Templates
+                  </Link>
                 </CardContent>
               </Card>
             </TabsContent>
