@@ -37,7 +37,7 @@ export async function login(
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE * 1000);
 
   await sql`
-    INSERT INTO sessions (user_id, session_token, expires_at)
+    INSERT INTO sessions (user_id, token, expires_at)
     VALUES (${user.id}, ${token}, ${expiresAt})
   `;
 
@@ -88,7 +88,7 @@ export async function signup(
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE * 1000);
 
   await sql`
-    INSERT INTO sessions (user_id, session_token, expires_at)
+    INSERT INTO sessions (user_id, token, expires_at)
     VALUES (${user.id}, ${token}, ${expiresAt})
   `;
 
