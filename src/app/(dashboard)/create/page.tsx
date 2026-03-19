@@ -1,19 +1,14 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { ASPECT_RATIOS, type AspectRatio } from "@/types";
+import { BrandKitSelector } from "@/components/BrandKitSelector";
+import { AspectRatioSelector } from "@/components/AspectRatioSelector";
+import type { AspectRatio } from "@/types";
 import { Loader2, Download, RefreshCw, Sparkles, Wand2 } from "lucide-react";
 
 interface GenerationResult {
@@ -23,40 +18,13 @@ interface GenerationResult {
   generationTimeMs: number;
 }
 
-interface BrandKitOption {
-  id: string;
-  name: string;
-}
-
 export default function CreatePage() {
   const [prompt, setPrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
   const [brandKitId, setBrandKitId] = useState<string>("");
-  const [brandKits, setBrandKits] = useState<BrandKitOption[]>([]);
-  const [brandKitsLoaded, setBrandKitsLoaded] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<GenerationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Lazy-load brand kits on first interaction
-  const loadBrandKits = useCallback(async () => {
-    if (brandKitsLoaded) return;
-    try {
-      const { createBrowserClient } = await import("@supabase/ssr");
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      );
-      const { data } = await supabase
-        .from("brand_kits")
-        .select("id, name")
-        .order("is_default", { ascending: false });
-      setBrandKits(data ?? []);
-      setBrandKitsLoaded(true);
-    } catch {
-      // Non-critical — brand kits are optional
-    }
-  }, [brandKitsLoaded]);
 
   async function handleGenerate() {
     if (!prompt.trim()) return;
@@ -166,48 +134,22 @@ export default function CreatePage() {
 
               {/* Aspect Ratio */}
               <div className="space-y-2">
-                <Label htmlFor="aspect-ratio">Aspect Ratio</Label>
-                <Select
+                <Label>Aspect Ratio</Label>
+                <AspectRatioSelector
                   value={aspectRatio}
-                  onValueChange={(v) => setAspectRatio(v as AspectRatio)}
+                  onValueChange={setAspectRatio}
                   disabled={generating}
-                >
-                  <SelectTrigger id="aspect-ratio">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ASPECT_RATIOS.map((r) => (
-                      <SelectItem key={r.value} value={r.value}>
-                        {r.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                />
               </div>
 
               {/* Brand Kit */}
               <div className="space-y-2">
-                <Label htmlFor="brand-kit">Brand Kit (optional)</Label>
-                <Select
+                <Label>Brand Kit (optional)</Label>
+                <BrandKitSelector
                   value={brandKitId}
-                  onValueChange={(v) => setBrandKitId(v ?? "")}
+                  onValueChange={setBrandKitId}
                   disabled={generating}
-                  onOpenChange={(open) => {
-                    if (open) loadBrandKits();
-                  }}
-                >
-                  <SelectTrigger id="brand-kit">
-                    <SelectValue placeholder="No brand kit" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No brand kit</SelectItem>
-                    {brandKits.map((kit) => (
-                      <SelectItem key={kit.id} value={kit.id}>
-                        {kit.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                />
               </div>
 
               {/* Generate Button */}
