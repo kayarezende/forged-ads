@@ -4,7 +4,7 @@ import { query, queryOne } from "@/lib/db";
 import { saveBase64File } from "@/lib/storage";
 import { deductCredits, refundCredits, checkRateLimit } from "@/lib/credits";
 import { buildPrompt } from "@/lib/ai/prompt-builder";
-import { generateImage } from "@/lib/ai/openrouter";
+import { generateImage } from "@/lib/ai/gemini-image";
 import { CREDIT_COSTS, AI_MODELS } from "@/lib/constants";
 import type { AspectRatio, BrandKit, Template } from "@/types";
 
@@ -162,7 +162,7 @@ export async function POST(request: Request) {
       [generationId]
     );
 
-    // 9. Call OpenRouter
+    // 9. Call Gemini API
     const startTime = Date.now();
     const result = await generateImage({
       prompt: finalPrompt,
@@ -170,14 +170,8 @@ export async function POST(request: Request) {
     });
     const generationTimeMs = Date.now() - startTime;
 
-    // 10. Extract base64 image from response
-    const imageData = extractBase64Image(result.content);
-    if (!imageData) {
-      throw new Error("No image data in response");
-    }
-
-    // 11. Save to local storage
-    const publicUrl = await saveBase64File(imageData.base64, {
+    // 10. Save to local storage
+    const publicUrl = await saveBase64File(result.base64, {
       directory: "generations",
       filename: `${generationId}.png`,
       extension: "png",
@@ -196,7 +190,6 @@ export async function POST(request: Request) {
           original_prompt: prompt?.trim() ?? null,
           template_id: templateId ?? null,
           model_used: result.model,
-          usage: result.usage,
         }),
         generationId,
       ]
@@ -227,48 +220,4 @@ export async function POST(request: Request) {
       error instanceof Error ? error.message : "Image generation failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
-}
-
-/** Extract base64 image data from OpenRouter multimodal response content. */
-function extractBase64Image(
-  content: string | Array<Record<string, unknown>>
-): { base64: string; mimeType: string } | null {
-  // Array of content parts (multimodal response)
-  if (Array.isArray(content)) {
-    for (const part of content) {
-      if (part.type === "image_url") {
-        const url = (part.image_url as Record<string, string>)?.url;
-        if (url) return parseDataUri(url);
-      }
-    }
-    // Fall through to string parsing if no image_url parts
-    const textParts = content
-      .filter((p) => p.type === "text")
-      .map((p) => p.text as string)
-      .join("");
-    if (textParts) return extractFromMarkdown(textParts);
-  }
-
-  // String content — look for data URI in markdown image syntax
-  if (typeof content === "string") {
-    return extractFromMarkdown(content) ?? parseDataUri(content);
-  }
-
-  return null;
-}
-
-function parseDataUri(
-  uri: string
-): { base64: string; mimeType: string } | null {
-  const match = uri.match(/^data:(image\/[^;]+);base64,([\s\S]+)$/);
-  if (!match) return null;
-  return { mimeType: match[1], base64: match[2] };
-}
-
-function extractFromMarkdown(
-  text: string
-): { base64: string; mimeType: string } | null {
-  const match = text.match(/!\[.*?\]\((data:image\/[^;]+;base64,[^)]+)\)/);
-  if (!match) return null;
-  return parseDataUri(match[1]);
 }
