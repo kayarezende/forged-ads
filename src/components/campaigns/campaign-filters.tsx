@@ -57,7 +57,7 @@ export function CampaignFilters({
 
   return (
     <div className="flex items-center gap-2">
-      <Select value={status} onValueChange={(v) => updateParam("status", v)}>
+      <Select value={status} onValueChange={(v) => v && updateParam("status", v)}>
         <SelectTrigger>
           <SelectValue placeholder="All statuses" />
         </SelectTrigger>
@@ -70,7 +70,7 @@ export function CampaignFilters({
         </SelectContent>
       </Select>
 
-      <Select value={sort} onValueChange={(v) => updateParam("sort", v)}>
+      <Select value={sort} onValueChange={(v) => v && updateParam("sort", v)}>
         <SelectTrigger>
           <SelectValue placeholder="Newest first" />
         </SelectTrigger>
