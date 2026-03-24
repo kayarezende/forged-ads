@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import type { Generation, ContentType } from "@/types";
+import type { Generation, ContentType, Campaign } from "@/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -15,7 +17,18 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { ImageIcon, Film, Clock, Coins, Loader2, RefreshCw, AlertCircle } from "lucide-react";
+import {
+  ImageIcon,
+  Film,
+  Clock,
+  Coins,
+  Loader2,
+  RefreshCw,
+  AlertCircle,
+  Layers,
+  ChevronRight,
+  Sparkles,
+} from "lucide-react";
 
 type Filter = "all" | ContentType;
 
@@ -35,13 +48,19 @@ function formatDuration(ms: number | null) {
 
 interface Props {
   initialGenerations: Generation[];
+  initialCampaigns: Campaign[];
   pageSize: number;
 }
 
-export function GalleryContent({ initialGenerations, pageSize }: Props) {
+export function GalleryContent({
+  initialGenerations,
+  initialCampaigns,
+  pageSize,
+}: Props) {
   const router = useRouter();
   const [generations, setGenerations] =
     useState<Generation[]>(initialGenerations);
+  const [campaigns] = useState<Campaign[]>(initialCampaigns);
   const [filter, setFilter] = useState<Filter>("all");
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -50,6 +69,30 @@ export function GalleryContent({ initialGenerations, pageSize }: Props) {
   );
   const [selected, setSelected] = useState<Generation | null>(null);
   const [retrying, setRetrying] = useState(false);
+
+  // Group generations by campaign for the Campaigns tab
+  const { campaignGroups, ungrouped } = useMemo(() => {
+    const grouped = new Map<string, Generation[]>();
+    const noGroup: Generation[] = [];
+
+    for (const gen of generations) {
+      if (gen.campaign_id) {
+        const existing = grouped.get(gen.campaign_id) ?? [];
+        existing.push(gen);
+        grouped.set(gen.campaign_id, existing);
+      } else {
+        noGroup.push(gen);
+      }
+    }
+
+    // Match campaigns with their generations
+    const groups = campaigns.map((campaign) => ({
+      campaign,
+      generations: grouped.get(campaign.id) ?? [],
+    }));
+
+    return { campaignGroups: groups, ungrouped: noGroup };
+  }, [generations, campaigns]);
 
   const fetchGenerations = useCallback(
     async (contentType: Filter, offset: number) => {
@@ -127,59 +170,118 @@ export function GalleryContent({ initialGenerations, pageSize }: Props) {
 
   return (
     <>
-      <div className="mt-6 flex gap-2">
-        {filters.map((f) => (
-          <Button
-            key={f.value}
-            variant={filter === f.value ? "default" : "outline"}
-            size="sm"
-            onClick={() => handleFilterChange(f.value)}
-          >
-            {f.label}
-          </Button>
-        ))}
-      </div>
+      <Tabs defaultValue="all" className="mt-6">
+        <TabsList>
+          <TabsTrigger value="all">All Generations</TabsTrigger>
+          <TabsTrigger value="campaigns">
+            Campaigns
+            {campaigns.length > 0 && (
+              <Badge variant="secondary" className="ml-1.5 px-1.5 py-0 text-[10px]">
+                {campaigns.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+        </TabsList>
 
-      {loading ? (
-        <div className="mt-12 flex justify-center">
-          <Loader2 className="size-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : generations.length === 0 ? (
-        <div className="mt-12 text-center text-sm text-muted-foreground">
-          No generations yet.
-        </div>
-      ) : (
-        <>
-          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-            {generations.map((gen) => (
-              <GenerationCard
-                key={gen.id}
-                generation={gen}
-                onClick={() => setSelected(gen)}
-              />
+        <TabsContent value="all">
+          <div className="mt-4 flex gap-2">
+            {filters.map((f) => (
+              <Button
+                key={f.value}
+                variant={filter === f.value ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleFilterChange(f.value)}
+              >
+                {f.label}
+              </Button>
             ))}
           </div>
 
-          {hasMore && (
-            <div className="mt-8 flex justify-center">
-              <Button
-                variant="outline"
-                onClick={handleLoadMore}
-                disabled={loadingMore}
-              >
-                {loadingMore ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Loading&hellip;
-                  </>
-                ) : (
-                  "Load more"
-                )}
-              </Button>
+          {loading ? (
+            <div className="mt-12 flex justify-center">
+              <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : generations.length === 0 ? (
+            <div className="mt-12 text-center text-sm text-muted-foreground">
+              No generations yet.
+            </div>
+          ) : (
+            <>
+              <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                {generations.map((gen) => (
+                  <GenerationCard
+                    key={gen.id}
+                    generation={gen}
+                    onClick={() => setSelected(gen)}
+                  />
+                ))}
+              </div>
+
+              {hasMore && (
+                <div className="mt-8 flex justify-center">
+                  <Button
+                    variant="outline"
+                    onClick={handleLoadMore}
+                    disabled={loadingMore}
+                  >
+                    {loadingMore ? (
+                      <>
+                        <Loader2 className="size-4 animate-spin" />
+                        Loading&hellip;
+                      </>
+                    ) : (
+                      "Load more"
+                    )}
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+        </TabsContent>
+
+        <TabsContent value="campaigns">
+          {campaigns.length === 0 && ungrouped.length === 0 ? (
+            <div className="mt-12 flex flex-col items-center justify-center gap-3 text-center">
+              <Layers className="size-10 text-muted-foreground/40" />
+              <p className="text-sm text-muted-foreground">
+                No campaigns yet. Create one from the Create page.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-4 space-y-8">
+              {campaignGroups.map(({ campaign, generations: gens }) => (
+                <CampaignSection
+                  key={campaign.id}
+                  campaign={campaign}
+                  generations={gens}
+                  onSelectGeneration={setSelected}
+                />
+              ))}
+
+              {ungrouped.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 border-b pb-3">
+                    <Sparkles className="size-4 text-muted-foreground" />
+                    <h3 className="text-sm font-medium">Quick Generates</h3>
+                    <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                      {ungrouped.length}
+                    </Badge>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                    {ungrouped.map((gen) => (
+                      <GenerationCard
+                        key={gen.id}
+                        generation={gen}
+                        onClick={() => setSelected(gen)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
-        </>
-      )}
+        </TabsContent>
+      </Tabs>
 
       <Dialog
         open={!!selected}
@@ -198,6 +300,97 @@ export function GalleryContent({ initialGenerations, pageSize }: Props) {
     </>
   );
 }
+
+// ============================================================
+// Campaign Section (grouped view)
+// ============================================================
+
+const STATUS_COLORS: Record<string, string> = {
+  draft: "bg-muted text-muted-foreground",
+  queued: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
+  generating: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  completed: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  partial: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+  failed: "bg-destructive/10 text-destructive",
+};
+
+function CampaignSection({
+  campaign,
+  generations,
+  onSelectGeneration,
+}: {
+  campaign: Campaign;
+  generations: Generation[];
+  onSelectGeneration: (gen: Generation) => void;
+}) {
+  const statusColor = STATUS_COLORS[campaign.status] ?? STATUS_COLORS.draft;
+  const progress =
+    campaign.total_variants > 0
+      ? Math.round(
+          (campaign.completed_variants / campaign.total_variants) * 100
+        )
+      : 0;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between border-b pb-3">
+        <div className="flex items-center gap-2">
+          <Layers className="size-4 text-muted-foreground" />
+          <h3 className="text-sm font-medium">{campaign.name}</h3>
+          <Badge className={`border-0 text-xs ${statusColor}`}>
+            {campaign.status}
+          </Badge>
+          <span className="text-xs text-muted-foreground">
+            {campaign.completed_variants}/{campaign.total_variants} variants
+          </span>
+        </div>
+        <Link
+          href={`/dashboard/campaigns/${campaign.id}`}
+          className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          View campaign
+          <ChevronRight className="size-3" />
+        </Link>
+      </div>
+
+      {(campaign.status === "generating" ||
+        campaign.status === "completed" ||
+        campaign.status === "partial") &&
+        campaign.total_variants > 0 && (
+          <div className="mt-2 mb-4">
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+      {generations.length > 0 ? (
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+          {generations.map((gen) => (
+            <GenerationCard
+              key={gen.id}
+              generation={gen}
+              onClick={() => onSelectGeneration(gen)}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="mt-4 text-xs text-muted-foreground">
+          {campaign.status === "draft"
+            ? "Generations will appear here once the campaign starts."
+            : "No generations loaded for this campaign."}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Generation Card
+// ============================================================
 
 function GenerationCard({
   generation,
@@ -262,6 +455,10 @@ function GenerationCard({
     </Card>
   );
 }
+
+// ============================================================
+// Generation Detail Dialog
+// ============================================================
 
 function GenerationDetail({
   generation,

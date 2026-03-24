@@ -1,5 +1,6 @@
 import { getUserId } from "@/lib/auth";
 import { query } from "@/lib/db";
+import { listCampaigns } from "@/lib/campaigns";
 import { GalleryContent } from "./gallery-content";
 import type { Generation } from "@/types";
 
@@ -15,13 +16,16 @@ export const metadata = {
 export default async function GalleryPage() {
   const userId = await getUserId();
 
-  const result = await query<Generation>(
-    `SELECT * FROM generations
-     WHERE user_id = $1
-     ORDER BY created_at DESC
-     LIMIT $2`,
-    [userId, PAGE_SIZE]
-  );
+  const [generationsResult, campaignsResult] = await Promise.all([
+    query<Generation>(
+      `SELECT * FROM generations
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [userId, PAGE_SIZE]
+    ),
+    listCampaigns(userId, { limit: 50, sort: "newest" }),
+  ]);
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -30,7 +34,8 @@ export default async function GalleryPage() {
         Your generation history
       </p>
       <GalleryContent
-        initialGenerations={result.rows}
+        initialGenerations={generationsResult.rows}
+        initialCampaigns={campaignsResult.campaigns}
         pageSize={PAGE_SIZE}
       />
     </div>
