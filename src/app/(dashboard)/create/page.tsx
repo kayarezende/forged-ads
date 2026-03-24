@@ -18,6 +18,7 @@ import {
   Wand2,
   ImageIcon,
   Video,
+  Layers,
 } from "lucide-react";
 
 type ContentMode = "image" | "video";
@@ -190,6 +191,19 @@ export default function CreatePage() {
         </p>
       </div>
 
+      <Tabs defaultValue="quick" className="w-full">
+        <TabsList className="mb-6 w-full">
+          <TabsTrigger value="quick" className="flex-1 gap-1.5">
+            <Sparkles className="h-3.5 w-3.5" />
+            Quick Generate
+          </TabsTrigger>
+          <TabsTrigger value="campaign" className="flex-1 gap-1.5">
+            <Layers className="h-3.5 w-3.5" />
+            New Campaign
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="quick">
       {/* Mode Toggle: Image / Video */}
       <div className="mb-6 flex gap-2" role="radiogroup" aria-label="Content type">
         <button
@@ -509,6 +523,29 @@ export default function CreatePage() {
           </Card>
         </div>
       </div>
+        </TabsContent>
+
+        <TabsContent value="campaign">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Layers className="h-4 w-4" />
+                New Campaign
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                Create a batch campaign to generate multiple ad variations at once.
+                Configure your target platforms, audience, and brand kit, then let AI
+                generate a full set of creatives.
+              </p>
+              <p className="mt-4 text-sm text-muted-foreground">
+                Coming soon — campaign creation will be available here.
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
