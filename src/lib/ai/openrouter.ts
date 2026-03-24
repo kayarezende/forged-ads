@@ -3,9 +3,15 @@ import type { AspectRatio } from "@/types";
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 const MODEL_ID = "google/gemini-3.1-flash-image-preview";
 
+interface ReferenceImage {
+  base64: string;
+  mimeType: string;
+}
+
 interface GenerateImageParams {
   prompt: string;
   aspectRatio?: AspectRatio;
+  referenceImages?: ReferenceImage[];
 }
 
 interface OpenRouterResponse {
@@ -17,7 +23,21 @@ interface OpenRouterResponse {
 export async function generateImage({
   prompt,
   aspectRatio = "1:1",
+  referenceImages,
 }: GenerateImageParams): Promise<OpenRouterResponse> {
+  // Build message content: text-only string when no references,
+  // multimodal content array when reference images are provided.
+  let messageContent: string | Array<Record<string, unknown>> = prompt;
+
+  if (referenceImages && referenceImages.length > 0) {
+    const parts: Array<Record<string, unknown>> = referenceImages.map((img) => ({
+      type: "image_url",
+      image_url: { url: `data:${img.mimeType};base64,${img.base64}` },
+    }));
+    parts.push({ type: "text", text: prompt });
+    messageContent = parts;
+  }
+
   const response = await fetch(OPENROUTER_API_URL, {
     method: "POST",
     headers: {
@@ -28,7 +48,7 @@ export async function generateImage({
     },
     body: JSON.stringify({
       model: MODEL_ID,
-      messages: [{ role: "user", content: prompt }],
+      messages: [{ role: "user", content: messageContent }],
       modalities: ["image", "text"],
       image_config: { aspect_ratio: aspectRatio },
     }),
