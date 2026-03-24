@@ -3,8 +3,17 @@ import type {
   Campaign,
   CampaignInput,
   CampaignVariant,
+  BrandKit,
+  AdAngle,
+  VisualStyle,
+  CampaignPlacement,
+  AspectRatio,
 } from "@/types";
-import { CAMPAIGN_PLACEMENTS, CREDIT_COSTS } from "@/lib/constants";
+import { CAMPAIGN_PLACEMENTS, CREDIT_COSTS, AI_MODELS } from "@/lib/constants";
+import { generateImage } from "@/lib/ai/openrouter";
+import { buildCampaignPrompt } from "@/lib/ai/campaign-prompt";
+import { saveBase64File } from "@/lib/storage";
+import { refundCampaignCredit } from "@/lib/credits";
 
 // ============================================================
 // Campaign CRUD
@@ -186,26 +195,205 @@ export async function getCampaignStatus(
 export async function processCampaign(
   campaignId: string
 ): Promise<void> {
+  // 1. Load campaign
+  const campaign = await queryOne<Campaign & { metadata: Record<string, unknown> }>(
+    `SELECT * FROM campaigns WHERE id = $1`,
+    [campaignId]
+  );
+  if (!campaign) {
+    throw new Error(`Campaign not found: ${campaignId}`);
+  }
+
   // Mark campaign as generating
-  await query(
+  const updateResult = await query(
     `UPDATE campaigns SET status = 'generating' WHERE id = $1 AND status = 'queued'`,
     [campaignId]
   );
+  if ((updateResult.rowCount ?? 0) === 0) {
+    throw new Error(`Campaign ${campaignId} is not in queued status`);
+  }
 
-  // Get pending variants
-  const result = await query<CampaignVariant>(
+  // Parse campaign metadata for prompt building
+  const meta = typeof campaign.metadata === "string"
+    ? JSON.parse(campaign.metadata as string)
+    : campaign.metadata;
+  const productDescription: string = meta.product_description ?? "";
+  const targetAudience: string | null = meta.target_audience ?? null;
+
+  // 2. If brand_kit_id exists, fetch the brand kit
+  let brandKit: BrandKit | null = null;
+  if (campaign.brand_kit_id) {
+    brandKit = await queryOne<BrandKit>(
+      `SELECT * FROM brand_kits WHERE id = $1`,
+      [campaign.brand_kit_id]
+    );
+  }
+
+  // 3. Get all pending variants
+  const result = await query<CampaignVariant & {
+    variable_overrides: Record<string, string> | string;
+    aspect_ratio: string;
+    credits_cost: number;
+  }>(
     `SELECT * FROM campaign_variants
      WHERE campaign_id = $1 AND status = 'pending'
      ORDER BY variant_index ASC`,
     [campaignId]
   );
+  const pendingVariants = result.rows;
 
-  for (const variant of result.rows) {
-    await query(
-      `UPDATE campaign_variants SET status = 'generating' WHERE id = $1`,
-      [variant.id]
-    );
+  if (pendingVariants.length === 0) {
+    // No pending variants — finalize campaign status
+    await queryOne(`SELECT update_campaign_progress($1)`, [campaignId]);
+    return;
   }
+
+  // 4. Process in batches of 5
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < pendingVariants.length; i += BATCH_SIZE) {
+    const batch = pendingVariants.slice(i, i + BATCH_SIZE);
+
+    const settled = await Promise.allSettled(
+      batch.map((variant) => processVariant(variant, {
+        campaignId,
+        userId: campaign.user_id,
+        productDescription,
+        targetAudience,
+        brandKit,
+      }))
+    );
+
+    // Handle results
+    for (let j = 0; j < settled.length; j++) {
+      const outcome = settled[j];
+      const variant = batch[j];
+
+      if (outcome.status === "rejected") {
+        const errorMsg = outcome.reason instanceof Error
+          ? outcome.reason.message
+          : String(outcome.reason);
+
+        // 6. On failure: mark variant failed, refund credit
+        await query(
+          `UPDATE campaign_variants
+           SET status = 'failed', error_message = $1
+           WHERE id = $2`,
+          [errorMsg.slice(0, 500), variant.id]
+        );
+
+        try {
+          await refundCampaignCredit(
+            campaign.user_id,
+            campaignId,
+            variant.credits_cost ?? CREDIT_COSTS.image
+          );
+        } catch {
+          // Best-effort refund — don't mask the variant error
+        }
+      }
+    }
+  }
+
+  // 7. After all batches: update campaign status via DB function
+  await queryOne(`SELECT update_campaign_progress($1)`, [campaignId]);
+}
+
+// ---- Helpers for processCampaign ----
+
+interface VariantContext {
+  campaignId: string;
+  userId: string;
+  productDescription: string;
+  targetAudience: string | null;
+  brandKit: BrandKit | null;
+}
+
+async function processVariant(
+  variant: CampaignVariant & {
+    variable_overrides: Record<string, string> | string;
+    aspect_ratio: string;
+    credits_cost: number;
+  },
+  ctx: VariantContext
+): Promise<void> {
+  // Mark variant as generating
+  await query(
+    `UPDATE campaign_variants SET status = 'generating' WHERE id = $1`,
+    [variant.id]
+  );
+
+  // 5a. Parse variable_overrides
+  const overrides = typeof variant.variable_overrides === "string"
+    ? JSON.parse(variant.variable_overrides)
+    : variant.variable_overrides;
+
+  const placement = overrides.placement as CampaignPlacement;
+  const adAngle = overrides.ad_angle as AdAngle;
+  const visualStyle = overrides.visual_style as VisualStyle;
+
+  // 5b. Build prompt
+  const prompt = buildCampaignPrompt({
+    productDescription: ctx.productDescription,
+    targetAudience: ctx.targetAudience,
+    adAngle,
+    visualStyle,
+    placement,
+    brandKit: ctx.brandKit,
+  });
+
+  // 5c. Get aspect ratio from the variant column
+  const aspectRatio = (variant.aspect_ratio || "1:1") as AspectRatio;
+
+  // 5d. Call image generation API
+  const startTime = Date.now();
+  const result = await generateImage({ prompt, aspectRatio });
+  const generationTimeMs = Date.now() - startTime;
+
+  // 5e-f. Save image to disk (Gemini returns base64 directly)
+  const generationId = crypto.randomUUID();
+  const publicUrl = await saveBase64File(result.base64, {
+    directory: "generations",
+    filename: `${generationId}.png`,
+    extension: "png",
+  });
+
+  // 5g. INSERT into generations table
+  await query(
+    `INSERT INTO generations
+      (id, user_id, brand_kit_id, campaign_id, content_type, model, prompt,
+       aspect_ratio, ad_angle, visual_style, placement,
+       output_url, thumbnail_url, status, credits_cost, generation_time_ms, metadata)
+     VALUES ($1, $2, $3, $4, 'image', $5, $6,
+             $7, $8, $9, $10,
+             $11, $11, 'completed', $12, $13, $14)`,
+    [
+      generationId,
+      ctx.userId,
+      ctx.brandKit?.id ?? null,
+      ctx.campaignId,
+      AI_MODELS.image,
+      prompt,
+      aspectRatio,
+      adAngle,
+      visualStyle,
+      placement,
+      publicUrl,
+      variant.credits_cost ?? CREDIT_COSTS.image,
+      generationTimeMs,
+      JSON.stringify({
+        model_used: result.model,
+        variant_id: variant.id,
+      }),
+    ]
+  );
+
+  // 5h. UPDATE variant: set generation_id, status='completed'
+  await query(
+    `UPDATE campaign_variants
+     SET generation_id = $1, status = 'completed'
+     WHERE id = $2`,
+    [generationId, variant.id]
+  );
 }
 
 export async function retryFailedVariants(
