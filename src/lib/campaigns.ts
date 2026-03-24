@@ -100,24 +100,46 @@ export async function createCampaign(
   return campaign;
 }
 
+const SORT_OPTIONS = {
+  newest: "created_at DESC",
+  oldest: "created_at ASC",
+  name_asc: "name ASC",
+  name_desc: "name DESC",
+} as const;
+
+export type CampaignSortKey = keyof typeof SORT_OPTIONS;
+
 export async function listCampaigns(
   userId: string,
-  opts?: { limit?: number; offset?: number }
+  opts?: { limit?: number; offset?: number; status?: string; sort?: string }
 ): Promise<{ campaigns: Campaign[]; total: number }> {
   const limit = opts?.limit ?? 20;
   const offset = opts?.offset ?? 0;
+  const orderBy = SORT_OPTIONS[(opts?.sort ?? "newest") as CampaignSortKey] ?? SORT_OPTIONS.newest;
+
+  let whereClause = "WHERE user_id = $1";
+  const params: unknown[] = [userId];
+
+  if (opts?.status && opts.status !== "all") {
+    params.push(opts.status);
+    whereClause += ` AND status = $${params.length}`;
+  }
+
+  params.push(limit, offset);
+  const limitIdx = params.length - 1;
+  const offsetIdx = params.length;
 
   const [result, countResult] = await Promise.all([
     query<Campaign>(
       `SELECT * FROM campaigns
-       WHERE user_id = $1
-       ORDER BY created_at DESC
-       LIMIT $2 OFFSET $3`,
-      [userId, limit, offset]
+       ${whereClause}
+       ORDER BY ${orderBy}
+       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      params
     ),
     queryOne<{ count: string }>(
-      `SELECT COUNT(*) AS count FROM campaigns WHERE user_id = $1`,
-      [userId]
+      `SELECT COUNT(*) AS count FROM campaigns ${whereClause}`,
+      params.slice(0, -2)
     ),
   ]);
 
