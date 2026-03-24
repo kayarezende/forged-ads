@@ -70,11 +70,15 @@ export interface Generation {
   user_id: string;
   brand_kit_id: string | null;
   template_id: string | null;
+  campaign_id: string | null;
   content_type: ContentType;
   model: string;
   prompt: string;
   negative_prompt: string | null;
   aspect_ratio: string;
+  ad_angle: string | null;
+  visual_style: string | null;
+  placement: string | null;
   output_url: string | null;
   thumbnail_url: string | null;
   status: GenerationStatus;
@@ -105,3 +109,13 @@ export const ASPECT_RATIOS: { value: AspectRatio; label: string }[] = [
   { value: "9:16", label: "Story (9:16)" },
   { value: "16:9", label: "Landscape (16:9)" },
 ];
+
+export type {
+  CampaignStatus,
+  AdAngle,
+  VisualStyle,
+  CampaignPlacement,
+  CampaignInput,
+  Campaign,
+  CampaignVariant,
+} from "./campaigns";
