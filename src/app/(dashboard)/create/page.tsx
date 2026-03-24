@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BrandKitSelector } from "@/components/BrandKitSelector";
 import { AspectRatioSelector } from "@/components/AspectRatioSelector";
 import type { AspectRatio } from "@/types";
+import { CampaignBuilder } from "@/components/campaigns/campaign-builder";
 import {
   Loader2,
   Download,
@@ -526,24 +527,7 @@ export default function CreatePage() {
         </TabsContent>
 
         <TabsContent value="campaign">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Layers className="h-4 w-4" />
-                New Campaign
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                Create a batch campaign to generate multiple ad variations at once.
-                Configure your target platforms, audience, and brand kit, then let AI
-                generate a full set of creatives.
-              </p>
-              <p className="mt-4 text-sm text-muted-foreground">
-                Coming soon — campaign creation will be available here.
-              </p>
-            </CardContent>
-          </Card>
+          <CampaignBuilder />
         </TabsContent>
       </Tabs>
     </div>
