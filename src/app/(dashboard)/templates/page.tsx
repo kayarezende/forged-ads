@@ -2,6 +2,8 @@ import { query } from "@/lib/db";
 import { TemplatesContent } from "./templates-content";
 import type { Template } from "@/types";
 
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Templates",
   description: "Browse ad creative templates optimized for every major ad platform.",

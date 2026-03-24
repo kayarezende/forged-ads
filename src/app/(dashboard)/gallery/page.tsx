@@ -3,6 +3,8 @@ import { query } from "@/lib/db";
 import { GalleryContent } from "./gallery-content";
 import type { Generation } from "@/types";
 
+export const dynamic = "force-dynamic";
+
 const PAGE_SIZE = 12;
 
 export const metadata = {

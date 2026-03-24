@@ -16,6 +16,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Billing",
   description: "Manage your subscription, credits, and billing.",

@@ -21,14 +21,15 @@ export async function queryOne<T extends pg.QueryResultRow = pg.QueryResultRow>(
   return result.rows[0] ?? null;
 }
 
-function sqlTemplate(strings: TemplateStringsArray, ...values: unknown[]) {
+async function sqlTemplate(strings: TemplateStringsArray, ...values: unknown[]) {
   const text = strings.reduce((acc, str, i) => acc + str + (i < values.length ? `$${i + 1}` : ''), '');
-  return pool.query(text, values);
+  const result = await pool.query(text, values);
+  return result.rows;
 }
 
 export default Object.assign(sqlTemplate, {
   async one<T = unknown>(strings: TemplateStringsArray, ...values: unknown[]): Promise<T | null> {
-    const result = await sqlTemplate(strings, ...values);
-    return result.rows[0] ?? null;
+    const rows = await sqlTemplate(strings, ...values);
+    return (rows[0] as T) ?? null;
   }
 });
