@@ -204,7 +204,7 @@ export function CampaignDetailContent({
       </div>
 
       {/* Progress section — only for active campaigns */}
-      {(isActive || campaign.status === "generating") && (
+      {isActive && (
         <Card>
           <CardContent className="pt-6">
             <CampaignProgress
