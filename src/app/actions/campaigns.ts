@@ -93,5 +93,5 @@ export async function createCampaignAction(
 
   revalidatePath("/dashboard/campaigns");
 
-  return { campaign: { ...campaign, status: "queued" } };
+  return { campaign: { ...campaign, status: "queued" as Campaign["status"] } };
 }
