@@ -66,6 +66,24 @@ export async function saveFile(
 }
 
 /**
+ * Convert a public URL back to the local filesystem path.
+ * E.g. "http://localhost:3000/uploads/campaigns/abc.png" → "uploads/campaigns/abc.png"
+ */
+export function urlToLocalPath(url: string): string {
+  const prefix = `${PUBLIC_URL}/`;
+  if (url.startsWith(prefix)) {
+    return url.slice(prefix.length);
+  }
+  // Already a relative path
+  if (!url.startsWith("http")) {
+    return url;
+  }
+  // Fallback: extract path from URL
+  const parsed = new URL(url);
+  return parsed.pathname.replace(/^\//, "");
+}
+
+/**
  * Save a base64-encoded file to local disk.
  */
 export async function saveBase64File(

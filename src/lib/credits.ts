@@ -38,6 +38,30 @@ export async function grantCredits(
   return result?.grant_credits ?? -1;
 }
 
+export async function deductCampaignCredits(
+  userId: string,
+  campaignId: string,
+  totalCost: number,
+  description?: string
+): Promise<boolean> {
+  const result = await queryOne<{ deduct_campaign_credits: boolean }>(
+    `SELECT deduct_campaign_credits($1, $2, $3, $4)`,
+    [userId, campaignId, totalCost, description ?? null]
+  );
+  return result?.deduct_campaign_credits ?? false;
+}
+
+export async function refundCampaignCredit(
+  userId: string,
+  campaignId: string,
+  amount: number
+): Promise<void> {
+  await queryOne(
+    `SELECT refund_credits($1, $2, $3)`,
+    [userId, amount, campaignId]
+  );
+}
+
 export async function checkRateLimit(
   userId: string,
   windowSeconds = 60,
