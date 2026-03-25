@@ -21,7 +21,7 @@ import type {
   CampaignPlacement,
   ContentType,
 } from "@/types";
-import { Loader2, Rocket, ImageIcon, Video } from "lucide-react";
+import { Loader2, Rocket, ImageIcon, Video, Minus, Plus } from "lucide-react";
 
 export function CampaignBuilder() {
   const router = useRouter();
@@ -35,6 +35,8 @@ export function CampaignBuilder() {
   const [placements, setPlacements] = useState<CampaignPlacement[]>([]);
   const [adAngles, setAdAngles] = useState<AdAngle[]>([]);
   const [visualStyles, setVisualStyles] = useState<VisualStyle[]>([]);
+
+  const [imagesPerVariant, setImagesPerVariant] = useState(1);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,11 +52,11 @@ export function CampaignBuilder() {
     []
   );
 
-  const totalVariants = placements.length * adAngles.length * visualStyles.length;
+  const matrixCombinations = placements.length * adAngles.length * visualStyles.length;
+  const totalVariants = matrixCombinations * imagesPerVariant;
 
   const canSubmit =
     name.trim().length > 0 &&
-    brandKitId.length > 0 &&
     productDescription.trim().length > 0 &&
     placements.length > 0 &&
     adAngles.length > 0 &&
@@ -73,13 +75,14 @@ export function CampaignBuilder() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: name.trim(),
-          brand_kit_id: brandKitId,
+          brand_kit_id: brandKitId || undefined,
           product_description: productDescription.trim(),
           target_audience: targetAudience.trim() || undefined,
           content_type: contentType,
           placements,
           ad_angles: adAngles,
           visual_styles: visualStyles,
+          images_per_variant: imagesPerVariant,
         }),
       });
 
@@ -91,7 +94,7 @@ export function CampaignBuilder() {
         return;
       }
 
-      router.push(`/campaigns/${data.id}`);
+      router.push(`/dashboard/campaigns/${data.id}`);
     } catch {
       setError("Network error — please try again");
       setSubmitting(false);
@@ -220,6 +223,49 @@ export function CampaignBuilder() {
         onToggle={(v) => toggleItem(visualStyles, setVisualStyles, v)}
         disabled={submitting}
       />
+
+      {/* Images Per Combination */}
+      <div className="space-y-2">
+        <Label>Images Per Combination</Label>
+        <p className="text-xs text-muted-foreground">
+          Generate multiple variations for each angle × style × placement combination
+        </p>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setImagesPerVariant(Math.max(1, imagesPerVariant - 1))}
+            disabled={submitting || imagesPerVariant <= 1}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-input bg-background text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+          >
+            <Minus className="h-4 w-4" />
+          </button>
+          <Input
+            type="number"
+            min={1}
+            max={20}
+            value={imagesPerVariant}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              if (!isNaN(v) && v >= 1 && v <= 20) setImagesPerVariant(v);
+            }}
+            disabled={submitting}
+            className="h-9 w-20 text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          />
+          <button
+            type="button"
+            onClick={() => setImagesPerVariant(Math.min(20, imagesPerVariant + 1))}
+            disabled={submitting || imagesPerVariant >= 20}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-input bg-background text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+          {matrixCombinations > 0 && (
+            <span className="text-sm text-muted-foreground">
+              {matrixCombinations} combination{matrixCombinations !== 1 ? "s" : ""} × {imagesPerVariant} = {totalVariants} total
+            </span>
+          )}
+        </div>
+      </div>
 
       {/* Matrix Summary */}
       <MatrixSummaryBar

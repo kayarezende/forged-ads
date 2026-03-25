@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 
-const UPLOAD_DIR = process.env.UPLOAD_DIR ?? "uploads";
+const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR ?? "uploads");
 const PUBLIC_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
 async function ensureDir(dir: string): Promise<void> {

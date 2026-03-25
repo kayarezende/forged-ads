@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
+import { after } from "next/server";
 import { getUserId } from "@/lib/auth";
-import { createCampaign, listCampaigns } from "@/lib/campaigns";
+import { createCampaign, listCampaigns, processCampaign } from "@/lib/campaigns";
 import { deductCampaignCredits } from "@/lib/credits";
 import { CREDIT_COSTS } from "@/lib/constants";
 import type { CampaignInput } from "@/types";
@@ -14,9 +15,7 @@ export async function POST(request: Request) {
     if (!body.name || typeof body.name !== "string" || body.name.trim().length === 0) {
       return NextResponse.json({ error: "Campaign name is required" }, { status: 400 });
     }
-    if (!body.brand_kit_id) {
-      return NextResponse.json({ error: "Brand kit is required" }, { status: 400 });
-    }
+    // brand_kit_id is optional
     if (!body.product_description || body.product_description.trim().length === 0) {
       return NextResponse.json({ error: "Product description is required" }, { status: 400 });
     }
@@ -35,7 +34,7 @@ export async function POST(request: Request) {
 
     const input: CampaignInput = {
       name: body.name.trim(),
-      brand_kit_id: body.brand_kit_id,
+      brand_kit_id: body.brand_kit_id || "",
       template_id: body.template_id,
       product_description: body.product_description.trim(),
       target_audience: body.target_audience?.trim() || undefined,
@@ -63,6 +62,11 @@ export async function POST(request: Request) {
         { status: 402 }
       );
     }
+
+    // Fire-and-forget background processing (works in both dev and production)
+    processCampaign(campaign.id).catch((e) =>
+      console.error("Campaign processing failed:", e)
+    );
 
     return NextResponse.json(campaign, { status: 201 });
   } catch (error) {

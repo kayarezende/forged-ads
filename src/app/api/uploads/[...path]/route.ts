@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "fs/promises";
-import { join } from "path";
+import { join, resolve } from "path";
 import { existsSync } from "fs";
 
-const UPLOAD_DIR = process.env.UPLOAD_DIR ?? "./uploads";
+const UPLOAD_DIR = resolve(process.env.UPLOAD_DIR ?? "uploads");
 
 const MIME_TYPES: Record<string, string> = {
   png: "image/png",
@@ -24,7 +24,7 @@ export async function GET(
   const filePath = join(UPLOAD_DIR, ...path);
 
   // Prevent directory traversal
-  if (filePath.includes("..")) {
+  if (!filePath.startsWith(UPLOAD_DIR)) {
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
 

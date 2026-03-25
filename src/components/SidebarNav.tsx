@@ -16,12 +16,12 @@ import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/dashboard/create", label: "Create", icon: Sparkles },
+  { href: "/create", label: "Create", icon: Sparkles },
   { href: "/dashboard/campaigns", label: "Campaigns", icon: Layers },
-  { href: "/dashboard/gallery", label: "Gallery", icon: Image },
+  { href: "/gallery", label: "Gallery", icon: Image },
   { href: "/dashboard/brand-kits", label: "Brand Kits", icon: Palette },
-  { href: "/dashboard/templates", label: "Templates", icon: LayoutTemplate },
-  { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
+  { href: "/templates", label: "Templates", icon: LayoutTemplate },
+  { href: "/billing", label: "Billing", icon: CreditCard },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 

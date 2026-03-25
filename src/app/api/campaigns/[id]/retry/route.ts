@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserId } from "@/lib/auth";
-import { retryFailedVariants } from "@/lib/campaigns";
+import { retryFailedVariants, processCampaign, getCampaign } from "@/lib/campaigns";
 
 export async function POST(
   _request: Request,
@@ -10,12 +10,22 @@ export async function POST(
     const { id } = await params;
     const userId = await getUserId();
 
+    const campaign = await getCampaign(id, userId);
+    if (!campaign) {
+      return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
+    }
+
+    // Reset failed variants back to pending
     const { retryCount } = await retryFailedVariants(id, userId);
 
-    return NextResponse.json({ retryCount });
+    // Trigger processing for any pending variants (handles both retry and resume)
+    processCampaign(id).catch((e) =>
+      console.error("Campaign processing failed:", e)
+    );
+
+    return NextResponse.json({ retryCount, status: "processing" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to retry campaign";
-    const status = message === "Campaign not found" ? 404 : 500;
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
